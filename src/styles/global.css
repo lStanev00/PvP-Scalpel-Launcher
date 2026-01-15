@@ -1,0 +1,61 @@
+:root {
+    --bg0: #0b0f14;
+    --bg1: #0f141b;
+    --panel: rgba(18, 24, 33, 0.72);
+    --panel2: rgba(18, 24, 33, 0.92);
+    --stroke: rgba(255, 255, 255, 0.08);
+    --stroke2: rgba(255, 255, 255, 0.12);
+
+    --text: #e6eaf0;
+    --muted: #8a94a6;
+
+    --accent: #3aa7ff;
+    --accent2: #7cf2c2;
+
+    --good: #3ad29f;
+    --warn: #ffcc66;
+    --bad: #ff4d4f;
+
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+    --shadow2: 0 10px 30px rgba(0, 0, 0, 0.35);
+
+    --r12: 12px;
+    --r16: 16px;
+    --r20: 20px;
+
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, "Apple Color Emoji",
+        "Segoe UI Emoji";
+}
+
+html,
+body {
+    height: 100%;
+}
+
+#root {
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--sans);
+    background: transparent;
+    overflow: hidden;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+button,
+input {
+    font: inherit;
+    color: inherit;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}

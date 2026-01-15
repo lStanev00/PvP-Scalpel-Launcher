@@ -1,0 +1,44 @@
+.backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(10px);
+    display: grid;
+    place-items: center;
+    padding: 18px;
+}
+
+.modal {
+    width: min(680px, 92vw);
+    border-radius: var(--r20);
+    background: var(--panel2);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.title {
+    font-weight: 750;
+    letter-spacing: 0.3px;
+}
+
+.x {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    cursor: pointer;
+}
+
+.body {
+    padding: 16px;
+}

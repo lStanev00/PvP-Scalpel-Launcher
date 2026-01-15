@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pvp-scalpel-launcher",
+  "productName": "PVP-S Launcher",
   "version": "0.1.0",
   "identifier": "bg.pvpscalpel.launcher",
   "build": {
@@ -14,7 +14,9 @@
       {
         "title": "pvp-scalpel-launcher",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "decorations": false,
+        "transparent": true
       }
     ],
     "security": {
