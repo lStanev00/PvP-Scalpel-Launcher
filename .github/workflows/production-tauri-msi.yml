@@ -1,0 +1,49 @@
+name: Production Tauri Build (MSI)
+
+on:
+  push:
+    branches:
+      - production
+
+jobs:
+  build-upload:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Tauri build (production)
+        run: npm run tauri build
+
+      - name: Upload Tauri MSI installers to S3
+        run: |
+          aws s3 sync "src-tauri/target/release/bundle/msi" "s3://${{ secrets.AWS_S3_BUCKET_NAME }}/Loader" --endpoint-url "${{ secrets.AWS_ENDPOINT_URL }}" --delete
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+
+      - name: Update launcher version manifest
+        run: |
+          $ErrorActionPreference = "Stop"
+          aws s3 cp "s3://${{ secrets.AWS_S3_BUCKET_NAME }}/manifest.json" manifest.json --endpoint-url "${{ secrets.AWS_ENDPOINT_URL }}"
+          if ($LASTEXITCODE -ne 0) { '{}' | Out-File -FilePath manifest.json -Encoding utf8 }
+          $env:VERSION = node -p "require('./src-tauri/tauri.conf.json').version"
+          node -e "const fs=require('fs');const p='manifest.json';const v=process.env.VERSION;let data={};try{data=JSON.parse(fs.readFileSync(p,'utf8'));}catch{};data.launcher=v;fs.writeFileSync(p,JSON.stringify(data));"
+          aws s3 cp manifest.json "s3://${{ secrets.AWS_S3_BUCKET_NAME }}/manifest.json" --endpoint-url "${{ secrets.AWS_ENDPOINT_URL }}"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
