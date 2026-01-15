@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 export type Health = "ok" | "updating" | "error";
 
@@ -6,6 +7,7 @@ export type LauncherStatus = {
     desktop: { state: Health; version: string; target: string };
     addon: { state: Health; version: string; target: string };
     integrity: { state: Health; label: string };
+    environment: { wowPath: string; desktopPath: string };
     progress: {
         active: boolean;
         percent: number;
@@ -45,6 +47,10 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
 
     const [percent, setPercent] = useState(63);
     const [progressActive, setProgressActive] = useState(true);
+    const [wowPath, setWowPath] = useState("Detecting...");
+    const [desktopPath, setDesktopPath] = useState("Detecting...");
+    const [desktopVersion, setDesktopVersion] = useState("Detecting...");
+    const [addonVersion, setAddonVersion] = useState("Detecting...");
 
     const addLog = (line: string) => setLogs((p) => [`[${ts()}] ${line}`, ...p].slice(0, 250));
 
@@ -96,6 +102,21 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         return () => window.clearInterval(id);
     }, [progressActive]);
 
+    useEffect(() => {
+        invoke<string | null>("get_wow_path")
+            .then((path) => setWowPath(path ?? "Not found"))
+            .catch(() => setWowPath("Not found"));
+        invoke<string | null>("get_desktop_path")
+            .then((path) => setDesktopPath(path ?? "Not found"))
+            .catch(() => setDesktopPath("Not found"));
+        invoke<string | null>("get_desktop_version")
+            .then((version) => setDesktopVersion(version ?? "Unknown"))
+            .catch(() => setDesktopVersion("Unknown"));
+        invoke<string | null>("get_addon_version")
+            .then((version) => setAddonVersion(version ?? "Unknown"))
+            .catch(() => setAddonVersion("Unknown"));
+    }, []);
+
     const canLaunch = useMemo(() => {
         return desktopState === "ok" && addonState === "ok" && integrityState === "ok" && !progressActive;
     }, [desktopState, addonState, integrityState, progressActive]);
@@ -107,9 +128,10 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     }, [canLaunch, desktopState, addonState, integrityState]);
 
     const status: LauncherStatus = {
-        desktop: { state: desktopState, version: "1.4.2", target: "1.4.2" },
-        addon: { state: addonState, version: "1.4.1", target: "1.4.2" },
+        desktop: { state: desktopState, version: desktopVersion, target: "1.4.2" },
+        addon: { state: addonState, version: addonVersion, target: "1.4.2" },
         integrity: { state: integrityState, label: integrityState === "ok" ? "Verified" : "Checking…" },
+        environment: { wowPath, desktopPath },
         progress: {
             active: progressActive,
             percent,
@@ -132,3 +154,4 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
 
     return { status, actions };
 }
+

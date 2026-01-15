@@ -20,11 +20,142 @@
     border: 0;
     background: linear-gradient(180deg, rgba(18, 24, 33, 0.96), rgba(14, 18, 25, 0.98));
     /* backdrop-filter: blur(12px); */
-    box-shadow: none;
+    box-shadow: none !important;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    position: relative;
 }
+
+.frameIntro .header,
+.frameIntro .main,
+.frameIntro .bgNoise,
+.frameIntro :global(.LogsDrawer_root),
+.frameIntro :global(.Modal_root) {
+    pointer-events: none;
+    visibility: hidden;
+}
+
+.frameIntro .main {
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(10px) scaleY(0.98);
+}
+
+.frameIntro .side,
+.frameIntro .hero,
+.frameIntro :global(.LogsDrawer_root) {
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(10px) scaleY(0.98);
+    visibility: hidden;
+}
+
+.frameReveal .header,
+.frameReveal .main,
+.frameReveal .side,
+.frameReveal .hero,
+.frameReveal :global(.LogsDrawer_root),
+.frameReveal :global(.Modal_root) {
+    visibility: visible;
+}
+
+.frameIntro {
+    background: transparent;
+}
+
+.header,
+.main {
+    transition: none;
+}
+
+.frameReveal .hero {
+    animation: unfold 1000ms ease forwards;
+    animation-delay: 180ms;
+}
+
+.frameReveal .side {
+    animation: unfold 1000ms ease forwards;
+    animation-delay: 360ms;
+}
+
+.frameReveal :global(.LogsDrawer_root) {
+    animation: unfold 1000ms ease forwards;
+    animation-delay: 540ms;
+}
+
+.introOverlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    gap: 10px;
+    background: transparent;
+    z-index: 5;
+    opacity: 1;
+    transition: opacity 360ms ease;
+    pointer-events: none;
+    --intro-target-x: 57px;
+    --intro-target-y: 55px;
+    --intro-offset-x: calc(var(--intro-target-x) - 50vw);
+    --intro-offset-y: calc(var(--intro-target-y) - 50vh);
+    --intro-logo-size: 320px;
+    --intro-final-scale: 0.14;
+}
+
+.introHidden {
+    opacity: 0;
+}
+
+.introActive .introLogo {
+    animation: introTravel 1400ms ease forwards;
+}
+
+.introLogo {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--intro-logo-size);
+    height: var(--intro-logo-size);
+    border-radius: 24px;
+    background-image: url("/app-icon.png");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    box-shadow: none;
+    transform: translate(-50%, -50%);
+}
+
+@keyframes introTravel {
+    0% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0;
+    }
+    45% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+    }
+    80% {
+        transform: translate(-50%, -50%) translate(var(--intro-offset-x), var(--intro-offset-y))
+            scale(var(--intro-final-scale));
+        opacity: 1;
+    }
+    100% {
+        transform: translate(-50%, -50%) translate(var(--intro-offset-x), var(--intro-offset-y))
+            scale(var(--intro-final-scale));
+        opacity: 0;
+    }
+}
+
+@keyframes unfold {
+    0% {
+        clip-path: inset(0 0 100% 0);
+        transform: translateY(10px) scaleY(0.98);
+    }
+    100% {
+        clip-path: inset(0 0 0% 0);
+        transform: translateY(0px) scaleY(1);
+    }
+}
+
 
 .header {
     display: flex;
@@ -322,6 +453,57 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(255, 255, 255, 0.05);
     cursor: pointer;
+}
+
+.toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggleInput {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.toggleTrack {
+    width: 44px;
+    height: 26px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    position: relative;
+    transition: background 180ms ease, border-color 180ms ease;
+}
+
+.toggleTrack::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: rgba(230, 234, 240, 0.95);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    transition: transform 180ms ease;
+}
+
+.toggleInput:checked + .toggleTrack {
+    background: linear-gradient(120deg, rgba(58, 167, 255, 0.6), rgba(124, 242, 194, 0.6));
+    border-color: rgba(124, 242, 194, 0.35);
+}
+
+.toggleInput:checked + .toggleTrack::after {
+    transform: translateX(18px);
+}
+
+.toggleText {
+    font-size: 12px;
+    color: rgba(230, 234, 240, 0.9);
 }
 
 @media (max-width: 980px) {

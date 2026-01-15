@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { LuMinus, LuSquare, LuX } from "react-icons/lu";
 import styles from "./Launcher.module.css";
 import { StatusTile } from "../components/StatusTile/StatusTile";
@@ -14,6 +16,21 @@ export default function Launcher() {
 
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
+    const [uiReady] = useState(true);
+    const [introActive, setIntroActive] = useState(true);
+    const [revealActive, setRevealActive] = useState(false);
+    const [showUi, setShowUi] = useState(false);
+    const [introCycle, setIntroCycle] = useState(0);
+    const [forceIntro, setForceIntro] = useState(true);
+    const [minimizeToTray, setMinimizeToTray] = useState(() => {
+        const stored = localStorage.getItem("minimizeToTray");
+        return stored ? stored === "true" : true;
+    });
+    const closeListenerRef = useRef<null | (() => void)>(null);
+    const minimizeToTrayRef = useRef(minimizeToTray);
+    const entranceTimerRef = useRef<number | null>(null);
+    const revealTimerRef = useRef<number | null>(null);
+    const introDoneRef = useRef(false);
 
     const primaryTone = useMemo(() => {
         if (status.canLaunch) return "accent";
@@ -41,6 +58,128 @@ export default function Launcher() {
         }
     }, []);
 
+    useEffect(() => {
+        const stored = localStorage.getItem("minimizeToTray");
+        if (stored === null) {
+            localStorage.setItem("minimizeToTray", "true");
+        }
+    }, []);
+
+    useEffect(() => {
+        const id = window.setTimeout(() => setForceIntro(false), 30);
+        return () => window.clearTimeout(id);
+    }, []);
+
+    const finishIntro = () => {
+        if (introDoneRef.current) return;
+        introDoneRef.current = true;
+        if (entranceTimerRef.current) window.clearTimeout(entranceTimerRef.current);
+        setIntroActive(false);
+        setShowUi(true);
+        setRevealActive(true);
+        if (revealTimerRef.current) window.clearTimeout(revealTimerRef.current);
+        revealTimerRef.current = window.setTimeout(() => setRevealActive(false), 900);
+    };
+
+    const startIntro = (durationMs: number) => {
+        if (entranceTimerRef.current) window.clearTimeout(entranceTimerRef.current);
+        if (revealTimerRef.current) window.clearTimeout(revealTimerRef.current);
+        introDoneRef.current = false;
+        setRevealActive(false);
+        setIntroActive(true);
+        setShowUi(false);
+        setIntroCycle((value) => value + 1);
+        entranceTimerRef.current = window.setTimeout(() => {
+            finishIntro();
+        }, durationMs);
+    };
+
+    useEffect(() => {
+        startIntro(5000);
+        return () => {
+            if (entranceTimerRef.current) window.clearTimeout(entranceTimerRef.current);
+            if (revealTimerRef.current) window.clearTimeout(revealTimerRef.current);
+        };
+    }, []);
+
+    useEffect(() => {
+        const win = getAppWindow();
+        if (!win) return undefined;
+
+        let cancelled = false;
+        win.onCloseRequested(async (event) => {
+            event.preventDefault();
+            if (minimizeToTrayRef.current) {
+                await hideToTray();
+                return;
+            }
+            await exitApp();
+        }).then((stop) => {
+            if (cancelled) {
+                stop();
+                return;
+            }
+            if (closeListenerRef.current) closeListenerRef.current();
+            closeListenerRef.current = stop;
+        });
+
+        return () => {
+            cancelled = true;
+            if (closeListenerRef.current) {
+                closeListenerRef.current();
+                closeListenerRef.current = null;
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        localStorage.setItem("minimizeToTray", String(minimizeToTray));
+        minimizeToTrayRef.current = minimizeToTray;
+        if (!minimizeToTray) {
+            const win = getAppWindow();
+            if (win) {
+                win.setSkipTaskbar(false).catch(() => undefined);
+            }
+        }
+    }, [minimizeToTray]);
+
+    useEffect(() => {
+        const statusText = status.progress.active
+            ? status.progress.label
+            : status.canLaunch
+              ? "Ready"
+              : "Locked";
+        invoke("update_tray_state", {
+            canLaunch: status.canLaunch,
+            statusText,
+        }).catch(() => undefined);
+    }, [status.canLaunch, status.progress.active, status.progress.label]);
+
+    useEffect(() => {
+        let unlisten: (() => void) | null = null;
+        listen("tray-launch", async () => {
+            await showFromTray();
+            if (status.canLaunch) actions.launch();
+        }).then((stop) => {
+            unlisten = stop;
+        });
+        return () => {
+            if (unlisten) unlisten();
+        };
+    }, [actions, status.canLaunch]);
+
+    useEffect(() => {
+        let unlisten: (() => void) | null = null;
+        listen("tray-show", () => {
+            showFromTray();
+        }).then((stop) => {
+            unlisten = stop;
+        });
+        return () => {
+            if (unlisten) unlisten();
+        };
+    }, []);
+
     const handleHeaderDrag = async (event: MouseEvent<HTMLElement>) => {
         if (event.button !== 0) return;
         const target = event.target as HTMLElement | null;
@@ -48,6 +187,42 @@ export default function Launcher() {
         if (target.closest("button, a, input, textarea, select, [data-no-drag]")) return;
         const win = getAppWindow();
         if (win) await win.startDragging();
+    };
+
+    const hideToTray = async () => {
+        const win = getAppWindow();
+        if (!win) return;
+        await win.setSkipTaskbar(true).catch(() => undefined);
+        await win.minimize().catch(() => undefined);
+        await win.hide().catch(() => undefined);
+    };
+
+    const showFromTray = async () => {
+        const win = getAppWindow();
+        if (!win) return;
+        if (entranceTimerRef.current) window.clearTimeout(entranceTimerRef.current);
+        if (revealTimerRef.current) window.clearTimeout(revealTimerRef.current);
+        setIntroActive(false);
+        setRevealActive(false);
+        setShowUi(true);
+        await win.setSkipTaskbar(false).catch(() => undefined);
+        await win.unminimize().catch(() => undefined);
+        await win.show().catch(() => undefined);
+        await win.center().catch(() => undefined);
+        await win.setFocus().catch(() => undefined);
+    };
+
+    const handleIntroEnd = () => {
+        finishIntro();
+    };
+
+    const exitApp = async () => {
+        try {
+            await invoke("exit_app");
+        } catch {
+            const win = getAppWindow();
+            if (win) await win.close();
+        }
     };
 
     const onPrimary = () => {
@@ -65,8 +240,22 @@ export default function Launcher() {
     return (
         <div className={styles.shell}>
             <div className={styles.bgNoise} />
-            <div className={styles.frame}>
-                <header className={styles.header} onMouseDown={handleHeaderDrag}>
+            <div
+                className={`${styles.frame} ${uiReady ? styles.frameReady : ""} ${
+                    introActive || forceIntro ? styles.frameIntro : ""
+                } ${revealActive ? styles.frameReveal : ""}`}
+                style={{ boxShadow: "none" }}
+            >
+                <div className={`${styles.introOverlay} ${introActive ? styles.introActive : styles.introHidden}`}>
+                    <div
+                        key={introCycle}
+                        className={styles.introLogo}
+                        onAnimationEnd={handleIntroEnd}
+                    />
+                </div>
+                {showUi && (
+                    <>
+                        <header className={styles.header} onMouseDown={handleHeaderDrag}>
                     <div className={styles.headerDrag}>
                         <div className={styles.brand}>
                             <div className={styles.logo} />
@@ -93,7 +282,12 @@ export default function Launcher() {
                                 onClick={async (event) => {
                                     event.stopPropagation();
                                     const win = getAppWindow();
-                                    if (win) await win.minimize();
+                                    if (!win) return;
+                                    if (minimizeToTrayRef.current) {
+                                        await hideToTray();
+                                        return;
+                                    }
+                                    await win.minimize();
                                 }}
                                 aria-label="Minimize window"
                                 title="Minimize"
@@ -119,7 +313,12 @@ export default function Launcher() {
                                 onClick={async (event) => {
                                     event.stopPropagation();
                                     const win = getAppWindow();
-                                    if (win) await win.close();
+                                    if (!win) return;
+                                    if (minimizeToTrayRef.current) {
+                                        await hideToTray();
+                                        return;
+                                    }
+                                    await exitApp();
                                 }}
                                 aria-label="Close window"
                                 title="Close"
@@ -128,9 +327,9 @@ export default function Launcher() {
                             </button>
                         </div>
                     </div>
-                </header>
+                        </header>
 
-                <main className={styles.main}>
+                        <main className={styles.main}>
                     <section className={styles.hero}>
                         <div className={styles.heroTop}>
                             <div className={styles.heroTitle}>Ready-to-fight build integrity</div>
@@ -194,15 +393,15 @@ export default function Launcher() {
                             <div className={styles.cardTitle}>Environment</div>
                             <div className={styles.kv}>
                                 <div className={styles.k}>WoW Path</div>
-                                <div className={styles.v}>Auto-detected</div>
+                                <div className={styles.v}>{status.environment.wowPath}</div>
+                            </div>
+                            <div className={styles.kv}>
+                                <div className={styles.k}>Desktop App</div>
+                                <div className={styles.v}>{status.environment.desktopPath}</div>
                             </div>
                             <div className={styles.kv}>
                                 <div className={styles.k}>Channel</div>
                                 <div className={styles.v}>Stable</div>
-                            </div>
-                            <div className={styles.kv}>
-                                <div className={styles.k}>Patch Mode</div>
-                                <div className={styles.v}>Strict</div>
                             </div>
                         </div>
 
@@ -222,32 +421,52 @@ export default function Launcher() {
                             </div>
                         </div>
                     </aside>
-                </main>
+                        </main>
+                    </>
+                )}
             </div>
 
-            <LogsDrawer open={logsOpen} lines={actions.logs} onToggle={() => setLogsOpen((p) => !p)} />
+            {showUi && (
+                <>
+                    <LogsDrawer open={logsOpen} lines={actions.logs} onToggle={() => setLogsOpen((p) => !p)} />
 
-            <Modal open={settingsOpen} title="Settings" onClose={() => setSettingsOpen(false)}>
-                <div className={styles.settingsGrid}>
-                    <div className={styles.field}>
-                        <div className={styles.label}>WoW install path</div>
-                        <input className={styles.input} value="Auto-detected (locked)" readOnly />
-                    </div>
-                    <div className={styles.field}>
-                        <div className={styles.label}>Addon folder</div>
-                        <input className={styles.input} value="Interface/AddOns/PvPScalpel" readOnly />
-                    </div>
-                    <div className={styles.fieldRow}>
-                        <button className={styles.ghostBtn} onClick={actions.forceRecheck}>
-                            Force recheck
-                        </button>
-                        <button className={styles.ghostBtn} onClick={() => setLogsOpen(true)}>
-                            Open logs
-                        </button>
-                    </div>
-                </div>
-            </Modal>
+                    <Modal open={settingsOpen} title="Settings" onClose={() => setSettingsOpen(false)}>
+                        <div className={styles.settingsGrid}>
+                            <div className={styles.field}>
+                                <div className={styles.label}>WoW install path</div>
+                                <input className={styles.input} value={status.environment.wowPath} readOnly />
+                            </div>
+                            <div className={styles.field}>
+                                <div className={styles.label}>Addon folder</div>
+                                <input className={styles.input} value="Interface/AddOns/PvPScalpel" readOnly />
+                            </div>
+                            <div className={styles.field}>
+                                <div className={styles.label}>Minimize to tray on close</div>
+                                <label className={styles.toggle}>
+                                    <input
+                                        className={styles.toggleInput}
+                                        type="checkbox"
+                                        checked={minimizeToTray}
+                                        onChange={(event) => setMinimizeToTray(event.target.checked)}
+                                    />
+                                    <span className={styles.toggleTrack} />
+                                    <span className={styles.toggleText}>
+                                        {minimizeToTray ? "Enabled" : "Disabled"}
+                                    </span>
+                                </label>
+                            </div>
+                            <div className={styles.fieldRow}>
+                                <button className={styles.ghostBtn} onClick={actions.forceRecheck}>
+                                    Force recheck
+                                </button>
+                                <button className={styles.ghostBtn} onClick={() => setLogsOpen(true)}>
+                                    Open logs
+                                </button>
+                            </div>
+                        </div>
+                    </Modal>
+                </>
+            )}
         </div>
     );
 }
-
