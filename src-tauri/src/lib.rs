@@ -50,6 +50,11 @@ pub fn run() {
                 let _ = window.center();
                 let _ = window.set_shadow(false);
             }
+            tauri::async_runtime::spawn(async {
+                if let Err(err) = commands::get_manifest().await {
+                    eprintln!("Manifest fetch failed: {err}");
+                }
+            });
             let launch = MenuItem::with_id(app, "launch", "Launch PvP Scalpel", false, None::<&str>)?;
             let status = MenuItem::with_id(app, "status", "Status: Checking", false, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Show Launcher", true, None::<&str>)?;
@@ -121,8 +126,14 @@ pub fn run() {
             commands::get_wow_path,
             commands::get_desktop_path,
             commands::get_desktop_version,
-            commands::get_addon_version
+            commands::get_addon_version,
+            commands::launch_desktop_app,
+            commands::get_manifest
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+
+
+

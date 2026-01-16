@@ -22,10 +22,16 @@ export type LauncherStatus = {
 export type LauncherActions = {
     startUpdate: () => void;
     cancelUpdate: () => void;
-    launch: () => void;
+    launch: () => Promise<boolean>;
     forceRecheck: () => void;
     addLog: (line: string) => void;
     logs: string[];
+};
+type ManifestItem = { path: string; version: string };
+type Manifest = {
+    addon?: ManifestItem;
+    desktop?: ManifestItem;
+    launcher?: ManifestItem;
 };
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -51,6 +57,8 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     const [desktopPath, setDesktopPath] = useState("Detecting...");
     const [desktopVersion, setDesktopVersion] = useState("Detecting...");
     const [addonVersion, setAddonVersion] = useState("Detecting...");
+    const [desktopTarget, setDesktopTarget] = useState("Detecting...");
+    const [addonTarget, setAddonTarget] = useState("Detecting...");
 
     const addLog = (line: string) => setLogs((p) => [`[${ts()}] ${line}`, ...p].slice(0, 250));
 
@@ -65,9 +73,18 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         setAddonState("error");
         addLog("Update cancelled");
     };
-
+
     const launch = () => {
         addLog("Launch requested");
+        return invoke("launch_desktop_app")
+            .then(() => {
+                addLog("Desktop app launched");
+                return true;
+            })
+            .catch((err) => {
+                addLog(`Launch failed: ${String(err)}`);
+                return false;
+            });
     };
 
     const forceRecheck = () => {
@@ -115,6 +132,17 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         invoke<string | null>("get_addon_version")
             .then((version) => setAddonVersion(version ?? "Unknown"))
             .catch(() => setAddonVersion("Unknown"));
+        invoke<Manifest>("get_manifest")
+            .then((manifest) => {
+                setAddonTarget(manifest.addon?.version ?? "Unknown");
+                setDesktopTarget(manifest.desktop?.version ?? "Unknown");
+                addLog("Manifest loaded");
+            })
+            .catch((err) => {
+                setAddonTarget("Unknown");
+                setDesktopTarget("Unknown");
+                addLog(`Manifest load failed: ${String(err)}`);
+            });
     }, []);
 
     const canLaunch = useMemo(() => {
@@ -128,8 +156,8 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     }, [canLaunch, desktopState, addonState, integrityState]);
 
     const status: LauncherStatus = {
-        desktop: { state: desktopState, version: desktopVersion, target: "1.4.2" },
-        addon: { state: addonState, version: addonVersion, target: "1.4.2" },
+        desktop: { state: desktopState, version: desktopVersion, target: desktopTarget },
+        addon: { state: addonState, version: addonVersion, target: addonTarget },
         integrity: { state: integrityState, label: integrityState === "ok" ? "Verified" : "Checking…" },
         environment: { wowPath, desktopPath },
         progress: {
@@ -154,4 +182,16 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
 
     return { status, actions };
 }
+
+
+
+
+
+
+
+
+
+
+
+
 

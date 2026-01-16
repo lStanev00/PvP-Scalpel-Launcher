@@ -159,7 +159,12 @@ export default function Launcher() {
         let unlisten: (() => void) | null = null;
         listen("tray-launch", async () => {
             await showFromTray();
-            if (status.canLaunch) actions.launch();
+            if (status.canLaunch) {
+                const launched = await actions.launch();
+                if (launched) {
+                    await hideToTray();
+                }
+            }
         }).then((stop) => {
             unlisten = stop;
         });
@@ -225,9 +230,12 @@ export default function Launcher() {
         }
     };
 
-    const onPrimary = () => {
+    const onPrimary = async () => {
         if (status.canLaunch) {
-            actions.launch();
+            const launched = await actions.launch();
+            if (launched) {
+                await hideToTray();
+            }
             return;
         }
         if (primaryTone === "danger") {
@@ -470,3 +478,5 @@ export default function Launcher() {
         </div>
     );
 }
+
+
