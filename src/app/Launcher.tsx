@@ -162,7 +162,7 @@ export default function Launcher() {
             if (status.canLaunch) {
                 const launched = await actions.launch();
                 if (launched) {
-                    await hideToTray();
+                    await exitApp();
                 }
             }
         }).then((stop) => {
@@ -234,7 +234,7 @@ export default function Launcher() {
         if (status.canLaunch) {
             const launched = await actions.launch();
             if (launched) {
-                await hideToTray();
+                await exitApp();
             }
             return;
         }
@@ -478,5 +478,3 @@ export default function Launcher() {
         </div>
     );
 }
-
-
