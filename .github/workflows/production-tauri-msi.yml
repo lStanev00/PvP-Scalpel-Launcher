@@ -44,10 +44,11 @@ jobs:
           $msi = Get-ChildItem "src-tauri/target/release/bundle/msi" -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $msi) { throw "MSI bundle not found." }
           $env:MSI_NAME = $msi.Name
-          node -e "const fs=require('fs');const p='manifest.json';const v=process.env.VERSION;const n=process.env.MSI_NAME;let data={};try{data=JSON.parse(fs.readFileSync(p,'utf8'));}catch{};data.launcher={version:v,path:`Loader/${n}`};fs.writeFileSync(p,JSON.stringify(data));"
+          node -e 'const fs=require("fs");const p="manifest.json";const v=process.env.VERSION;const n=process.env.MSI_NAME;let data={};try{data=JSON.parse(fs.readFileSync(p,"utf8"));}catch{};data.launcher={version:v,path:"Loader/"+n};fs.writeFileSync(p,JSON.stringify(data));'
           aws s3 cp manifest.json "s3://${{ secrets.AWS_S3_BUCKET_NAME }}/manifest.json" --endpoint-url "${{ secrets.AWS_ENDPOINT_URL }}"
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+
 
