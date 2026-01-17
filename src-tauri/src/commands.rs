@@ -206,7 +206,7 @@ async fn api_get_json(path: &str) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn get_manifest() -> Result<Value, String> {
-    let manifest = api_get_json("/CDN/getManifest").await?;
+    let manifest = api_get_json("/CDN/manifest").await?;
     println!("Manifest: {manifest}");
     Ok(manifest)
 }
