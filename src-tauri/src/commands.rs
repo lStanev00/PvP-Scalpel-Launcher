@@ -5,7 +5,9 @@ use std::sync::{Arc, OnceLock};
 use registry::{Data, Hive, Security};
 use std::fs;
 use reqwest::Client;
+use serde::Serialize;
 use serde_json::Value;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, Notify};
 
 struct ManifestCache {
@@ -26,8 +28,11 @@ impl ManifestCache {
 
 static MANIFEST_CACHE: OnceLock<Mutex<ManifestCache>> = OnceLock::new();
 
-#[tauri::command]
-pub fn get_wow_path() -> Option<String> {
+fn emit_log(app: &AppHandle, message: &str) {
+    let _ = app.emit_to("main", "launcher-log", message.to_string());
+}
+
+fn read_wow_path() -> Option<String> {
     let main_key = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Battle.net\Game\wow";
 
     if let Ok(key) = Hive::LocalMachine.open(main_key, Security::Read) {
@@ -52,7 +57,16 @@ pub fn get_wow_path() -> Option<String> {
 }
 
 #[tauri::command]
-pub fn get_desktop_path() -> Option<String> {
+pub fn get_wow_path(app: AppHandle) -> Option<String> {
+    let result = read_wow_path();
+    match result.as_deref() {
+        Some(path) => emit_log(&app, &format!("WoW path detected ({path})")),
+        None => emit_log(&app, "WoW path not found"),
+    }
+    result
+}
+
+fn read_desktop_path() -> Option<String> {
     let keys = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PvP Scalpel",
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\bg.pvpscalpel.desktop",
@@ -91,7 +105,16 @@ pub fn get_desktop_path() -> Option<String> {
 }
 
 #[tauri::command]
-pub fn get_desktop_version() -> Option<String> {
+pub fn get_desktop_path(app: AppHandle) -> Option<String> {
+    let result = read_desktop_path();
+    match result.as_deref() {
+        Some(path) => emit_log(&app, &format!("Desktop path detected ({path})")),
+        None => emit_log(&app, "Desktop path not found"),
+    }
+    result
+}
+
+fn read_desktop_version() -> Option<String> {
     let keys = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PvP Scalpel",
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\bg.pvpscalpel.desktop",
@@ -114,6 +137,16 @@ pub fn get_desktop_version() -> Option<String> {
     }
 
     None
+}
+
+#[tauri::command]
+pub fn get_desktop_version(app: AppHandle) -> Option<String> {
+    let result = read_desktop_version();
+    match result.as_deref() {
+        Some(version) => emit_log(&app, &format!("Desktop version detected ({version})")),
+        None => emit_log(&app, "Desktop version not found"),
+    }
+    result
 }
 
 fn find_desktop_exe() -> Option<PathBuf> {
@@ -166,17 +199,37 @@ fn find_desktop_exe() -> Option<PathBuf> {
 }
 
 #[tauri::command]
-pub fn launch_desktop_app() -> Result<(), String> {
-    let exe = find_desktop_exe().ok_or_else(|| "Desktop app not found".to_string())?;
+pub fn launch_desktop_app(app: AppHandle) -> Result<(), String> {
+    let exe = match find_desktop_exe() {
+        Some(exe) => exe,
+        None => {
+            emit_log(&app, "Desktop app not found");
+            return Err("Desktop app not found".to_string());
+        }
+    };
+    emit_log(&app, "Launch requested");
     Command::new(&exe)
         .spawn()
-        .map_err(|err| format!("Failed to launch desktop app: {err}"))?;
+        .map_err(|err| {
+            emit_log(&app, &format!("Launch failed: {err}"));
+            format!("Failed to launch desktop app: {err}")
+        })?;
+    emit_log(&app, "Desktop app launched");
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_addon_version() -> Option<String> {
-    let addons_root = get_wow_path()?;
+pub fn get_addon_version(app: AppHandle) -> Option<String> {
+    let result = read_addon_version();
+    match result.as_deref() {
+        Some(version) => emit_log(&app, &format!("Addon version detected ({version})")),
+        None => emit_log(&app, "Addon version not found"),
+    }
+    result
+}
+
+fn read_addon_version() -> Option<String> {
+    let addons_root = read_wow_path()?;
     let toc_path = Path::new(&addons_root).join("PvP_Scalpel").join("PvP_Scalpel.toc");
     let contents = match fs::read_to_string(&toc_path) {
         Ok(contents) => contents,
@@ -224,14 +277,13 @@ async fn api_get_json(path: &str) -> Result<Value, String> {
         .map_err(|err| format!("Manifest parse failed: {err}"))
 }
 
-#[tauri::command]
-pub async fn get_manifest() -> Result<Value, String> {
+async fn load_manifest() -> Result<(Value, bool), String> {
     let cache = MANIFEST_CACHE.get_or_init(|| Mutex::new(ManifestCache::new()));
 
     loop {
         let mut guard = cache.lock().await;
         if let Some(value) = guard.value.clone() {
-            return Ok(value);
+            return Ok((value, true));
         }
 
         if guard.fetching {
@@ -252,8 +304,7 @@ pub async fn get_manifest() -> Result<Value, String> {
             Ok(value) => {
                 guard.value = Some(value.clone());
                 guard.notify.notify_waiters();
-                println!("Manifest: {value}");
-                return Ok(value);
+                return Ok((value, false));
             }
             Err(err) => {
                 guard.notify.notify_waiters();
@@ -261,6 +312,132 @@ pub async fn get_manifest() -> Result<Value, String> {
             }
         }
     }
+}
+
+#[tauri::command]
+pub async fn get_manifest(app: AppHandle) -> Result<Value, String> {
+    let (manifest, cache_hit) = load_manifest().await?;
+    if cache_hit {
+        emit_log(&app, "Manifest loaded (cache)");
+    } else {
+        emit_log(&app, "Manifest fetched");
+    }
+    Ok(manifest)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherSnapshot {
+    pub wow_path: Option<String>,
+    pub desktop_path: Option<String>,
+    pub desktop_version: Option<String>,
+    pub addon_version: Option<String>,
+    pub desktop_target: Option<String>,
+    pub addon_target: Option<String>,
+}
+
+fn log_version_compare(app: &AppHandle, label: &str, local: Option<&str>, target: Option<&str>) -> Option<bool> {
+    match (local, target) {
+        (Some(local), Some(target)) => {
+            if local == target {
+                emit_log(app, &format!("{label} version OK ({local})"));
+                Some(true)
+            } else {
+                emit_log(app, &format!("{label} mismatch (local {local}, target {target})"));
+                Some(false)
+            }
+        }
+        _ => {
+            emit_log(app, &format!("{label} version check skipped"));
+            None
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_launcher_snapshot(app: AppHandle) -> Result<LauncherSnapshot, String> {
+    emit_log(&app, "Launcher initialized");
+
+    let wow_path = read_wow_path();
+    match wow_path.as_deref() {
+        Some(path) => emit_log(&app, &format!("WoW path detected ({path})")),
+        None => emit_log(&app, "WoW path not found"),
+    }
+
+    let desktop_path = read_desktop_path();
+    match desktop_path.as_deref() {
+        Some(path) => emit_log(&app, &format!("Desktop path detected ({path})")),
+        None => emit_log(&app, "Desktop path not found"),
+    }
+
+    let desktop_version = read_desktop_version();
+    match desktop_version.as_deref() {
+        Some(version) => emit_log(&app, &format!("Desktop version detected ({version})")),
+        None => emit_log(&app, "Desktop version not found"),
+    }
+
+    let addon_version = read_addon_version();
+    match addon_version.as_deref() {
+        Some(version) => emit_log(&app, &format!("Addon version detected ({version})")),
+        None => emit_log(&app, "Addon version not found"),
+    }
+
+    let manifest = match load_manifest().await {
+        Ok((manifest, cache_hit)) => {
+            if cache_hit {
+                emit_log(&app, "Manifest loaded (cache)");
+            } else {
+                emit_log(&app, "Manifest fetched");
+            }
+            Some(manifest)
+        }
+        Err(err) => {
+            emit_log(&app, &format!("Manifest load failed: {err}"));
+            None
+        }
+    };
+
+    let desktop_target = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.get("desktop"))
+        .and_then(|desktop| desktop.get("version"))
+        .and_then(|version| version.as_str())
+        .map(|value| value.to_string());
+
+    let addon_target = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.get("addon"))
+        .and_then(|addon| addon.get("version"))
+        .and_then(|version| version.as_str())
+        .map(|value| value.to_string());
+
+    let desktop_ok = log_version_compare(
+        &app,
+        "Desktop",
+        desktop_version.as_deref(),
+        desktop_target.as_deref(),
+    );
+    let addon_ok = log_version_compare(
+        &app,
+        "Addon",
+        addon_version.as_deref(),
+        addon_target.as_deref(),
+    );
+
+    match (desktop_ok, addon_ok, manifest.is_some()) {
+        (Some(true), Some(true), true) => emit_log(&app, "Outcome: versions match, launch ready"),
+        (Some(false), _, _) | (_, Some(false), _) => emit_log(&app, "Outcome: update required"),
+        _ => emit_log(&app, "Outcome: version check incomplete"),
+    }
+
+    Ok(LauncherSnapshot {
+        wow_path,
+        desktop_path,
+        desktop_version,
+        addon_version,
+        desktop_target,
+        addon_target,
+    })
 }
 
 
