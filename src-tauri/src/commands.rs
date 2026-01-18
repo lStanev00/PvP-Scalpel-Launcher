@@ -1,10 +1,30 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, OnceLock};
 
 use registry::{Data, Hive, Security};
 use std::fs;
 use reqwest::Client;
 use serde_json::Value;
+use tokio::sync::{Mutex, Notify};
+
+struct ManifestCache {
+    value: Option<Value>,
+    fetching: bool,
+    notify: Arc<Notify>,
+}
+
+impl ManifestCache {
+    fn new() -> Self {
+        Self {
+            value: None,
+            fetching: false,
+            notify: Arc::new(Notify::new()),
+        }
+    }
+}
+
+static MANIFEST_CACHE: OnceLock<Mutex<ManifestCache>> = OnceLock::new();
 
 #[tauri::command]
 pub fn get_wow_path() -> Option<String> {
@@ -206,9 +226,41 @@ async fn api_get_json(path: &str) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn get_manifest() -> Result<Value, String> {
-    let manifest = api_get_json("/CDN/manifest").await?;
-    println!("Manifest: {manifest}");
-    Ok(manifest)
+    let cache = MANIFEST_CACHE.get_or_init(|| Mutex::new(ManifestCache::new()));
+
+    loop {
+        let mut guard = cache.lock().await;
+        if let Some(value) = guard.value.clone() {
+            return Ok(value);
+        }
+
+        if guard.fetching {
+            let notify = guard.notify.clone();
+            drop(guard);
+            notify.notified().await;
+            continue;
+        }
+
+        guard.fetching = true;
+        drop(guard);
+
+        let fetched = api_get_json("/CDN/manifest").await;
+
+        let mut guard = cache.lock().await;
+        guard.fetching = false;
+        match fetched {
+            Ok(value) => {
+                guard.value = Some(value.clone());
+                guard.notify.notify_waiters();
+                println!("Manifest: {value}");
+                return Ok(value);
+            }
+            Err(err) => {
+                guard.notify.notify_waiters();
+                return Err(err);
+            }
+        }
+    }
 }
 
 
