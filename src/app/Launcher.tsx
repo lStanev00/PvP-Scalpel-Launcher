@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -32,16 +32,7 @@ export default function Launcher() {
     const revealTimerRef = useRef<number | null>(null);
     const introDoneRef = useRef(false);
 
-    const primaryTone = useMemo(() => {
-        if (status.canLaunch) return "accent";
-        if (
-            status.desktop.state === "error" ||
-            status.addon.state === "error" ||
-            status.integrity.state === "error"
-        )
-            return "danger";
-        return "muted";
-    }, [status]);
+    const primaryTone = status.primaryTone;
 
     const getAppWindow = () => {
         try {
@@ -367,20 +358,22 @@ export default function Launcher() {
                             />
                         </div>
 
-                        <div className={styles.progress}>
-                            <ProgressBar
-                                percent={status.progress.percent}
-                                active={status.progress.active}
-                                label={status.progress.label}
-                                detail={status.progress.detail}
-                                rate={status.progress.rate}
-                            />
-                        </div>
+                        {status.progress.active ? (
+                            <div className={styles.progress}>
+                                <ProgressBar
+                                    percent={status.progress.percent}
+                                    active={status.progress.active}
+                                    label={status.progress.label}
+                                    detail={status.progress.detail}
+                                    rate={status.progress.rate}
+                                />
+                            </div>
+                        ) : null}
 
                         <div className={styles.primary}>
                             <PrimaryButton
                                 label={status.primaryLabel}
-                                disabled={!status.canLaunch && primaryTone !== "danger"}
+                                disabled={!status.primaryEnabled}
                                 tone={primaryTone as any}
                                 onClick={onPrimary}
                             />

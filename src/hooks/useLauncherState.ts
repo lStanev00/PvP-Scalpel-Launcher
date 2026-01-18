@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { resolveLauncherState, type ComponentState, type IntegrityStatus } from "../state/launcherState";
 
-export type Health = "ok" | "updating" | "error";
+export type Health = "ok" | "checking" | "updating" | "required" | "error";
+
+export type PrimaryTone = "accent" | "required" | "danger" | "muted";
 
 export type LauncherStatus = {
     desktop: { state: Health; version: string; target: string };
@@ -18,6 +21,8 @@ export type LauncherStatus = {
     };
     canLaunch: boolean;
     primaryLabel: string;
+    primaryEnabled: boolean;
+    primaryTone: PrimaryTone;
 };
 
 export type LauncherActions = {
@@ -37,10 +42,67 @@ type LauncherSnapshot = {
     addonTarget: string | null;
 };
 
+type DetectionPhase = "IDLE" | "DETECTING" | "RESOLVED";
+
 const pad2 = (n: number) => String(n).padStart(2, "0");
 let cachedLogs: string[] = [];
-let bootstrapped = false;
 let lastRawLog: string | null = null;
+let cachedSnapshot: LauncherSnapshot | null = null;
+let cachedSnapshotError = false;
+let bootstrapPromise:
+    | Promise<{ snapshot: LauncherSnapshot | null; error: boolean }>
+    | null = null;
+
+const isMissing = (value: string | null | undefined) =>
+    !value || value === "Not found" || value === "Unknown" || value === "Detecting...";
+
+const mapComponentState = (state: ComponentState): Health => {
+    switch (state) {
+        case "INSTALLED_OK":
+            return "ok";
+        case "CHECKING":
+            return "checking";
+        case "UPDATING":
+            return "updating";
+        case "NOT_INSTALLED":
+        case "INSTALLED_OUTDATED":
+            return "required";
+        default:
+            return "error";
+    }
+};
+
+const mapIntegrity = (status: IntegrityStatus): { state: Health; label: string } => {
+    switch (status) {
+        case "VERIFIED":
+            return { state: "ok", label: "Verified" };
+        case "CHECKING":
+            return { state: "checking", label: "Checking" };
+        default:
+            return { state: "required", label: "Incomplete" };
+    }
+};
+
+const resolveComponent = ({
+    path,
+    version,
+    target,
+    checking,
+    errored,
+}: {
+    path: string | null | undefined;
+    version: string | null | undefined;
+    target: string | null | undefined;
+    checking: boolean;
+    errored: boolean;
+}): ComponentState => {
+    if (checking) return "CHECKING";
+    if (errored) return "ERROR";
+    if (isMissing(path) || isMissing(version)) return "NOT_INSTALLED";
+    if (isMissing(target)) return "ERROR";
+    if (version === target) return "INSTALLED_OK";
+    return "INSTALLED_OUTDATED";
+};
 
 const ts = () => {
     const d = new Date();
@@ -50,18 +112,10 @@ const ts = () => {
 export function useLauncherState(): { status: LauncherStatus; actions: LauncherActions } {
     const [logs, setLogs] = useState<string[]>(cachedLogs);
 
-    const [desktopState, setDesktopState] = useState<Health>("ok");
-    const [addonState, setAddonState] = useState<Health>("updating");
-    const [integrityState, setIntegrityState] = useState<Health>("ok");
-
-    const [percent, setPercent] = useState(63);
-    const [progressActive, setProgressActive] = useState(true);
-    const [wowPath, setWowPath] = useState("Detecting...");
-    const [desktopPath, setDesktopPath] = useState("Detecting...");
-    const [desktopVersion, setDesktopVersion] = useState("Detecting...");
-    const [addonVersion, setAddonVersion] = useState("Detecting...");
-    const [desktopTarget, setDesktopTarget] = useState("Detecting...");
-    const [addonTarget, setAddonTarget] = useState("Detecting...");
+    const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
+    const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>("IDLE");
+    const [snapshotError, setSnapshotError] = useState(false);
+    const [detectionTick, setDetectionTick] = useState(0);
 
     const addLog = (line: string) => {
         if (lastRawLog === line) return;
@@ -72,13 +126,10 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     };
 
     const startUpdate = () => {
-        setProgressActive(true);
-        setAddonState("updating");
+        setDetectionTick((value) => value + 1);
     };
 
     const cancelUpdate = () => {
-        setProgressActive(false);
-        setAddonState("error");
     };
 
 
@@ -89,104 +140,154 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     };
 
     const forceRecheck = () => {
-        setDesktopState("updating");
-        setAddonState("updating");
-        setIntegrityState("updating");
-        setProgressActive(true);
-        setPercent(0);
-        setTimeout(() => setDesktopState("ok"), 700);
-        setTimeout(() => setIntegrityState("ok"), 1100);
-        setTimeout(() => setAddonState("ok"), 1600);
-        setTimeout(() => setProgressActive(false), 1900);
+        setDetectionTick((value) => value + 1);
     };
 
     useEffect(() => {
-        if (!progressActive) return;
-
-        const id = window.setInterval(() => {
-            setPercent((p) => {
-                const next = Math.min(100, p + Math.max(1, Math.floor(Math.random() * 4)));
-                if (next >= 100) {
-                    window.clearInterval(id);
-                    setProgressActive(false);
-                    setAddonState("ok");
-                }
-                return next;
-            });
-        }, 220);
-
-        return () => window.clearInterval(id);
-    }, [progressActive]);
-
-    useEffect(() => {
-        let cancelled = false;
         let unlisten: (() => void) | null = null;
-
-        const loadState = async () => {
-            try {
-                const snapshot = await invoke<LauncherSnapshot>("get_launcher_snapshot");
-                if (cancelled) return;
-                setWowPath(snapshot.wowPath ?? "Not found");
-                setDesktopPath(snapshot.desktopPath ?? "Not found");
-                setDesktopVersion(snapshot.desktopVersion ?? "Unknown");
-                setAddonVersion(snapshot.addonVersion ?? "Unknown");
-                setDesktopTarget(snapshot.desktopTarget ?? "Unknown");
-                setAddonTarget(snapshot.addonTarget ?? "Unknown");
-            } catch {
-                if (cancelled) return;
-                setWowPath("Not found");
-                setDesktopPath("Not found");
-                setDesktopVersion("Unknown");
-                setAddonVersion("Unknown");
-                setAddonTarget("Unknown");
-                setDesktopTarget("Unknown");
-            }
-        };
-
-        const setup = async () => {
-            unlisten = await listen<string>("launcher-log", (event) => {
-                addLog(event.payload);
-            });
-            if (!bootstrapped) {
-                await loadState();
-                if (!cancelled) {
-                    bootstrapped = true;
-                }
-            }
-        };
-
-        setup();
-
+        listen<string>("launcher-log", (event) => {
+            addLog(event.payload);
+        }).then((stop) => {
+            unlisten = stop;
+        });
         return () => {
-            cancelled = true;
             if (unlisten) unlisten();
         };
     }, []);
 
-    const canLaunch = useMemo(() => {
-        return desktopState === "ok" && addonState === "ok" && integrityState === "ok" && !progressActive;
-    }, [desktopState, addonState, integrityState, progressActive]);
+    useEffect(() => {
+        let cancelled = false;
 
-    const primaryLabel = useMemo(() => {
-        if (canLaunch) return "LAUNCH APPLICATION";
-        if (desktopState === "error" || addonState === "error" || integrityState === "error") return "FIX REQUIRED";
-        return "UPDATING";
-    }, [canLaunch, desktopState, addonState, integrityState]);
+        const loadState = async () => {
+            if (detectionTick === 0 && (cachedSnapshot || cachedSnapshotError)) {
+                setSnapshot(cachedSnapshot);
+                setSnapshotError(cachedSnapshotError);
+                setDetectionPhase("RESOLVED");
+                return;
+            }
 
+            setDetectionPhase("DETECTING");
+            const runDetection = async () => {
+                try {
+                    const nextSnapshot = await invoke<LauncherSnapshot>("get_launcher_snapshot");
+                    return { snapshot: nextSnapshot, error: false };
+                } catch {
+                    return { snapshot: null, error: true };
+                }
+            };
+
+            const resultPromise =
+                detectionTick === 0
+                    ? bootstrapPromise ?? (bootstrapPromise = runDetection())
+                    : runDetection();
+
+            const result = await resultPromise;
+            if (cancelled) return;
+            setSnapshot(result.snapshot);
+            setSnapshotError(result.error);
+            setDetectionPhase("RESOLVED");
+            cachedSnapshot = result.snapshot;
+            cachedSnapshotError = result.error;
+            bootstrapPromise = Promise.resolve(result);
+        };
+
+        loadState();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [detectionTick]);
+
+    const isDetecting = detectionPhase !== "RESOLVED";
+
+    const wowPath = useMemo(() => {
+        if (snapshot?.wowPath) return snapshot.wowPath;
+        return isDetecting ? "Detecting..." : "Not found";
+    }, [isDetecting, snapshot]);
+    const desktopPath = useMemo(() => {
+        if (snapshot?.desktopPath) return snapshot.desktopPath;
+        return isDetecting ? "Detecting..." : "Not found";
+    }, [isDetecting, snapshot]);
+    const desktopVersion = useMemo(() => {
+        if (snapshot?.desktopVersion) return snapshot.desktopVersion;
+        return isDetecting ? "Detecting..." : "Unknown";
+    }, [isDetecting, snapshot]);
+    const addonVersion = useMemo(() => {
+        if (snapshot?.addonVersion) return snapshot.addonVersion;
+        return isDetecting ? "Detecting..." : "Unknown";
+    }, [isDetecting, snapshot]);
+    const desktopTarget = useMemo(() => {
+        if (snapshot?.desktopTarget) return snapshot.desktopTarget;
+        return isDetecting ? "Detecting..." : "Unknown";
+    }, [isDetecting, snapshot]);
+    const addonTarget = useMemo(() => {
+        if (snapshot?.addonTarget) return snapshot.addonTarget;
+        return isDetecting ? "Detecting..." : "Unknown";
+    }, [isDetecting, snapshot]);
+
+    const desktopComponent = useMemo(
+        () =>
+            resolveComponent({
+                path: snapshot?.desktopPath,
+                version: snapshot?.desktopVersion,
+                target: snapshot?.desktopTarget,
+                checking: isDetecting,
+                errored: snapshotError,
+            }),
+        [isDetecting, snapshot, snapshotError],
+    );
+
+    const addonComponent = useMemo(
+        () =>
+            resolveComponent({
+                path: snapshot?.wowPath,
+                version: snapshot?.addonVersion,
+                target: snapshot?.addonTarget,
+                checking: isDetecting,
+                errored: snapshotError,
+            }),
+        [isDetecting, snapshot, snapshotError],
+    );
+
+    const resolved = useMemo(
+        () => resolveLauncherState({ desktop: desktopComponent, addon: addonComponent }),
+        [addonComponent, desktopComponent],
+    );
+
+    const canLaunch = resolved.globalState === "READY";
+    const needsInstallOrUpdate =
+        desktopComponent === "NOT_INSTALLED" ||
+        desktopComponent === "INSTALLED_OUTDATED" ||
+        addonComponent === "NOT_INSTALLED" ||
+        addonComponent === "INSTALLED_OUTDATED";
+    const hasError = desktopComponent === "ERROR" || addonComponent === "ERROR";
+
+    const primaryTone: PrimaryTone = canLaunch
+        ? "accent"
+        : hasError
+          ? "danger"
+          : needsInstallOrUpdate
+            ? "required"
+            : "muted";
+
+    const integrity = mapIntegrity(resolved.integrityStatus);
+    const progressActive = resolved.showProgressBar;
     const status: LauncherStatus = {
-        desktop: { state: desktopState, version: desktopVersion, target: desktopTarget },
-        addon: { state: addonState, version: addonVersion, target: addonTarget },
-        integrity: { state: integrityState, label: integrityState === "ok" ? "Verified" : "Checking" },
+        desktop: { state: mapComponentState(desktopComponent), version: desktopVersion, target: desktopTarget },
+        addon: { state: mapComponentState(addonComponent), version: addonVersion, target: addonTarget },
+        integrity,
         environment: { wowPath, desktopPath },
         progress: {
             active: progressActive,
-            percent,
-            label: progressActive ? "Updating Addon" : "Up to date",
-            detail: progressActive ? "Downloading: PvPScalpel_Addon.zip" : "Ready",
-            rate: progressActive ? "6.2 MB/s" : "",
+            percent: progressActive ? 0 : 0,
+            label: progressActive ? "Checking integrity" : "",
+            detail: progressActive ? "Verifying required components" : "",
+            rate: "",
         },
         canLaunch,
-        primaryLabel,
+        primaryLabel: resolved.primaryActionLabel,
+        primaryEnabled: resolved.primaryActionEnabled,
+        primaryTone,
     };
 
     const actions: LauncherActions = {
