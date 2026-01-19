@@ -10,6 +10,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, Notify};
 
+// In-memory single-flight cache for the manifest endpoint.
 struct ManifestCache {
     value: Option<Value>,
     fetching: bool,
@@ -28,10 +29,12 @@ impl ManifestCache {
 
 static MANIFEST_CACHE: OnceLock<Mutex<ManifestCache>> = OnceLock::new();
 
+// Emit log lines for the frontend to consume.
 fn emit_log(app: &AppHandle, message: &str) {
     let _ = app.emit_to("main", "launcher-log", message.to_string());
 }
 
+// Resolve WoW AddOns path from registry keys (read-only).
 fn read_wow_path() -> Option<String> {
     let main_key = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Battle.net\Game\wow";
 
@@ -66,6 +69,7 @@ pub fn get_wow_path(app: AppHandle) -> Option<String> {
     result
 }
 
+// Locate the desktop app install directory via uninstall registry entries.
 fn read_desktop_path() -> Option<String> {
     let keys = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PvP Scalpel",
@@ -114,6 +118,7 @@ pub fn get_desktop_path(app: AppHandle) -> Option<String> {
     result
 }
 
+// Extract the desktop app version from uninstall registry entries.
 fn read_desktop_version() -> Option<String> {
     let keys = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PvP Scalpel",
@@ -149,6 +154,7 @@ pub fn get_desktop_version(app: AppHandle) -> Option<String> {
     result
 }
 
+// Resolve the desktop executable path based on registry metadata.
 fn find_desktop_exe() -> Option<PathBuf> {
     let keys = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PvP Scalpel",
@@ -228,6 +234,7 @@ pub fn get_addon_version(app: AppHandle) -> Option<String> {
     result
 }
 
+// Parse the addon version from the PvP_Scalpel.toc file.
 fn read_addon_version() -> Option<String> {
     let addons_root = read_wow_path()?;
     let toc_path = Path::new(&addons_root).join("PvP_Scalpel").join("PvP_Scalpel.toc");
@@ -256,6 +263,7 @@ fn read_addon_version() -> Option<String> {
 
 const API_BASE: &str = "https://api.pvpscalpel.com";
 
+// Fetch a JSON payload from the API with the required header.
 async fn api_get_json(path: &str) -> Result<Value, String> {
     let url = format!("{}{}", API_BASE, path);
     let client = Client::new();
@@ -277,6 +285,7 @@ async fn api_get_json(path: &str) -> Result<Value, String> {
         .map_err(|err| format!("Manifest parse failed: {err}"))
 }
 
+// Single-flight manifest fetch to avoid parallel downloads.
 async fn load_manifest() -> Result<(Value, bool), String> {
     let cache = MANIFEST_CACHE.get_or_init(|| Mutex::new(ManifestCache::new()));
 
@@ -336,6 +345,7 @@ pub struct LauncherSnapshot {
     pub addon_target: Option<String>,
 }
 
+// Emit a structured comparison result for each component.
 fn log_version_compare(app: &AppHandle, label: &str, local: Option<&str>, target: Option<&str>) -> Option<bool> {
     match (local, target) {
         (Some(local), Some(target)) => {
@@ -355,6 +365,7 @@ fn log_version_compare(app: &AppHandle, label: &str, local: Option<&str>, target
 }
 
 #[tauri::command]
+// Full detection + comparison workflow used by the frontend.
 pub async fn get_launcher_snapshot(app: AppHandle) -> Result<LauncherSnapshot, String> {
     emit_log(&app, "Launcher initialized");
 
