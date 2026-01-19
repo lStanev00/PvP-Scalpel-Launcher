@@ -41,6 +41,7 @@ impl ManifestCache {
 }
 
 static MANIFEST_CACHE: OnceLock<Mutex<ManifestCache>> = OnceLock::new();
+// Global cancel flag for a single in-flight action.
 static ACTION_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
@@ -86,6 +87,7 @@ fn emit_addon_reload_notice(app: &AppHandle) {
     );
 }
 
+// Check for a running WoW process to decide whether to show the reload dialog.
 fn is_wow_running() -> bool {
     let mut system = System::new_all();
     system.refresh_processes();
@@ -95,6 +97,7 @@ fn is_wow_running() -> bool {
     })
 }
 
+// Fast cancel check used by long-running action steps.
 fn ensure_not_cancelled() -> Result<(), String> {
     if ACTION_CANCELLED.load(Ordering::SeqCst) {
         return Err("CANCELLED".to_string());
@@ -102,6 +105,7 @@ fn ensure_not_cancelled() -> Result<(), String> {
     Ok(())
 }
 
+// Resolve a writable temp directory under app data.
 fn temp_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
@@ -112,6 +116,7 @@ fn temp_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(tmp)
 }
 
+// Ask the API for a CDN download URL for the given key.
 async fn request_download_url(key: &str) -> Result<String, String> {
     let encoded = encode(key);
     let url = format!("{}/CDN/download/{}", API_BASE, encoded);
@@ -153,6 +158,7 @@ async fn request_download_url(key: &str) -> Result<String, String> {
     Err("Download URL response was not a URL".to_string())
 }
 
+// Only allow https downloads from the CDN response.
 fn validate_https_url(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw).map_err(|err| format!("Invalid download URL: {err}"))?;
     if url.scheme() != "https" {
@@ -161,6 +167,7 @@ fn validate_https_url(raw: &str) -> Result<Url, String> {
     Ok(url)
 }
 
+// Stream the download to disk while emitting progress events.
 async fn download_with_progress(app: &AppHandle, url: &Url, dest: &Path) -> Result<(), String> {
     let client = Client::new();
     let response = client
@@ -211,6 +218,7 @@ async fn download_with_progress(app: &AppHandle, url: &Url, dest: &Path) -> Resu
     Ok(())
 }
 
+// ZipSlip-safe extraction using enclosed paths only.
 fn extract_zip_secure(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
     let file = File::open(zip_path).map_err(|err| format!("Zip open failed: {err}"))?;
     let mut archive = ZipArchive::new(file).map_err(|err| format!("Zip read failed: {err}"))?;
@@ -238,6 +246,7 @@ fn extract_zip_secure(zip_path: &Path, dest_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// Replace a directory with a cross-volume copy fallback.
 fn replace_dir_atomic(source: &Path, target: &Path) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("Target dir create failed: {err}"))?;
@@ -258,6 +267,7 @@ fn replace_dir_atomic(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// Recursive directory copy used for cross-volume replacements.
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
     fs::create_dir_all(target).map_err(|err| format!("Target dir create failed: {err}"))?;
     for entry in fs::read_dir(source).map_err(|err| format!("Source dir read failed: {err}"))? {
@@ -574,6 +584,7 @@ pub async fn get_manifest(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+// Cancel a single in-progress action; checked during download/install/verify.
 pub fn cancel_action() {
     ACTION_CANCELLED.store(true, Ordering::SeqCst);
 }
@@ -616,6 +627,7 @@ fn manifest_entry_version(manifest: &Value, key: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+// Run NSIS installer silently and return exit code.
 async fn run_nsis_installer(path: PathBuf) -> Result<i32, String> {
     tokio::task::spawn_blocking(move || {
         let mut cmd = Command::new(&path);
@@ -631,6 +643,7 @@ async fn run_nsis_installer(path: PathBuf) -> Result<i32, String> {
     .map_err(|err| format!("Installer task failed: {err}"))?
 }
 
+// Extract addon archive, normalize layout, and replace the target addon folder.
 async fn install_addon_from_zip(app: &AppHandle, zip_path: &Path) -> Result<(), String> {
     let tmp = temp_dir(app)?;
     let stamp = SystemTime::now()
@@ -704,6 +717,7 @@ async fn install_addon_from_zip(app: &AppHandle, zip_path: &Path) -> Result<(), 
     Ok(())
 }
 
+// Re-read versions after install/update to confirm success.
 fn verify_after_action(app: &AppHandle, manifest: &Value, action: &str) -> Result<(), String> {
     let desktop_version = read_desktop_version();
     let addon_version = read_addon_version();
@@ -743,6 +757,7 @@ fn verify_after_action(app: &AppHandle, manifest: &Value, action: &str) -> Resul
 }
 
 #[tauri::command]
+// End-to-end action phase: request URL -> download -> install -> verify.
 pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResult, String> {
     ACTION_CANCELLED.store(false, Ordering::SeqCst);
     emit_action_progress(&app, "REQUEST_URL", None, "Requesting download URL", "Requesting download URL");
