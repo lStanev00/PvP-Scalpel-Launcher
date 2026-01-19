@@ -43,6 +43,21 @@ type LauncherSnapshot = {
 };
 
 type DetectionPhase = "IDLE" | "DETECTING" | "RESOLVED";
+type ActionPhase = "IDLE" | "REQUEST_URL" | "DOWNLOADING" | "INSTALLING" | "VERIFYING" | "ERROR";
+type ActionTarget = "desktop" | "addon" | null;
+
+type ActionProgressEvent = {
+    phase: ActionPhase;
+    progress: number | null;
+    message: string;
+    log: string;
+};
+
+type ActionResult = {
+    ok: boolean;
+    errorCode?: string;
+    errorMessage?: string;
+};
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 let cachedLogs: string[] = [];
@@ -88,15 +103,18 @@ const resolveComponent = ({
     version,
     target,
     checking,
+    updating,
     errored,
 }: {
     path: string | null | undefined;
     version: string | null | undefined;
     target: string | null | undefined;
     checking: boolean;
+    updating: boolean;
     errored: boolean;
 }): ComponentState => {
     if (checking) return "CHECKING";
+    if (updating) return "UPDATING";
     if (errored) return "ERROR";
     if (isMissing(path) || isMissing(version)) return "NOT_INSTALLED";
     if (isMissing(target)) return "ERROR";
@@ -116,6 +134,10 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     const [detectionPhase, setDetectionPhase] = useState<DetectionPhase>("IDLE");
     const [snapshotError, setSnapshotError] = useState(false);
     const [detectionTick, setDetectionTick] = useState(0);
+    const [actionPhase, setActionPhase] = useState<ActionPhase>("IDLE");
+    const [actionProgress, setActionProgress] = useState<number | null>(null);
+    const [actionMessage, setActionMessage] = useState("");
+    const [actionTarget, setActionTarget] = useState<ActionTarget>(null);
 
     const addLog = (line: string) => {
         if (lastRawLog === line) return;
@@ -126,10 +148,39 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     };
 
     const startUpdate = () => {
-        setDetectionTick((value) => value + 1);
+        if (!requiredAction || requiredAction === "LAUNCH") return;
+        const target = requiredAction.includes("DESKTOP") ? "desktop" : "addon";
+        setActionTarget(target);
+        setActionPhase("REQUEST_URL");
+        setActionProgress(null);
+        setActionMessage("Requesting download URL");
+
+        invoke<ActionResult>("perform_action", { action: requiredAction })
+            .then((result) => {
+                if (!result.ok) {
+                    setActionPhase("ERROR");
+                    setActionMessage(result.errorMessage ?? "Action failed");
+                    setActionTarget(null);
+                    return;
+                }
+                setActionPhase("IDLE");
+                setActionMessage("");
+                setActionProgress(null);
+                setActionTarget(null);
+                setDetectionTick((value) => value + 1);
+            })
+            .catch((err) => {
+                setActionPhase("ERROR");
+                setActionMessage(String(err));
+                setActionTarget(null);
+            });
     };
 
     const cancelUpdate = () => {
+        invoke("cancel_action").catch(() => undefined);
+        setActionPhase("ERROR");
+        setActionMessage("Action cancelled");
+        setActionTarget(null);
     };
 
 
@@ -145,11 +196,24 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
 
     useEffect(() => {
         let unlisten: (() => void) | null = null;
+        const unlistenTasks: Array<() => void> = [];
         listen<string>("launcher-log", (event) => {
             addLog(event.payload);
         }).then((stop) => {
-            unlisten = stop;
+            unlistenTasks.push(stop);
         });
+        listen<ActionProgressEvent>("action-progress", (event) => {
+            const payload = event.payload;
+            setActionPhase(payload.phase);
+            setActionProgress(payload.progress ?? null);
+            setActionMessage(payload.message);
+            if (payload.log) addLog(payload.log);
+        }).then((stop) => {
+            unlistenTasks.push(stop);
+        });
+        unlisten = () => {
+            unlistenTasks.forEach((stop) => stop());
+        };
         return () => {
             if (unlisten) unlisten();
         };
@@ -199,6 +263,7 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     }, [detectionTick]);
 
     const isDetecting = detectionPhase !== "RESOLVED";
+    const isUpdating = actionPhase !== "IDLE" && actionPhase !== "ERROR";
 
     const wowPath = useMemo(() => {
         if (snapshot?.wowPath) return snapshot.wowPath;
@@ -232,9 +297,10 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
                 version: snapshot?.desktopVersion,
                 target: snapshot?.desktopTarget,
                 checking: isDetecting,
+                updating: isUpdating && actionTarget === "desktop",
                 errored: snapshotError,
             }),
-        [isDetecting, snapshot, snapshotError],
+        [actionTarget, isDetecting, isUpdating, snapshot, snapshotError],
     );
 
     const addonComponent = useMemo(
@@ -244,15 +310,25 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
                 version: snapshot?.addonVersion,
                 target: snapshot?.addonTarget,
                 checking: isDetecting,
+                updating: isUpdating && actionTarget === "addon",
                 errored: snapshotError,
             }),
-        [isDetecting, snapshot, snapshotError],
+        [actionTarget, isDetecting, isUpdating, snapshot, snapshotError],
     );
 
     const resolved = useMemo(
         () => resolveLauncherState({ desktop: desktopComponent, addon: addonComponent }),
         [addonComponent, desktopComponent],
     );
+
+    const requiredAction = useMemo(() => {
+        if (desktopComponent === "NOT_INSTALLED") return "INSTALL_DESKTOP";
+        if (desktopComponent === "INSTALLED_OUTDATED") return "UPDATE_DESKTOP";
+        if (addonComponent === "NOT_INSTALLED") return "INSTALL_ADDON";
+        if (addonComponent === "INSTALLED_OUTDATED") return "UPDATE_ADDON";
+        if (resolved.globalState === "READY") return "LAUNCH";
+        return null;
+    }, [addonComponent, desktopComponent, resolved.globalState]);
 
     const canLaunch = resolved.globalState === "READY";
     const needsInstallOrUpdate =
@@ -279,9 +355,9 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         environment: { wowPath, desktopPath },
         progress: {
             active: progressActive,
-            percent: progressActive ? 0 : 0,
-            label: progressActive ? "Checking integrity" : "",
-            detail: progressActive ? "Verifying required components" : "",
+            percent: progressActive ? actionProgress ?? 0 : 0,
+            label: progressActive ? actionMessage : "",
+            detail: progressActive ? actionPhase : "",
             rate: "",
         },
         canLaunch,

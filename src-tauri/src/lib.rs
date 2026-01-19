@@ -124,6 +124,8 @@ pub fn run() {
             commands::get_addon_version,
             commands::launch_desktop_app,
             commands::get_manifest,
+            commands::cancel_action,
+            commands::perform_action,
             commands::get_launcher_snapshot
         ])
         .run(tauri::generate_context!())

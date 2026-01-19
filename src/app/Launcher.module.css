@@ -421,6 +421,50 @@
     gap: 12px;
 }
 
+.addonModal {
+    min-height: 260px;
+}
+
+.addonModalBody {
+    display: grid;
+    gap: 12px;
+    padding: 18px;
+}
+
+.addonModalContent {
+    display: grid;
+    gap: 12px;
+}
+
+.addonModalStatus {
+    font-size: 12px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: rgba(245, 165, 36, 0.95);
+    font-weight: 720;
+}
+
+.addonModalMessage {
+    font-size: 15px;
+    line-height: 1.5;
+    color: rgba(230, 234, 240, 0.98);
+}
+
+.addonModalHint {
+    font-size: 12px;
+    color: rgba(172, 182, 200, 0.95);
+}
+
+.addonModalActions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 6px;
+}
+
+.addonModalActionButton {
+    width: 140px;
+}
+
 .field {
     display: grid;
     gap: 8px;

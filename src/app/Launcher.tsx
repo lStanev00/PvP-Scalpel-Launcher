@@ -22,6 +22,7 @@ export default function Launcher() {
     const [showUi, setShowUi] = useState(false);
     const [introCycle, setIntroCycle] = useState(0);
     const [forceIntro, setForceIntro] = useState(true);
+    const [addonReloadOpen, setAddonReloadOpen] = useState(false);
     const [minimizeToTray, setMinimizeToTray] = useState(() => {
         const stored = localStorage.getItem("minimizeToTray");
         return stored ? stored === "true" : true;
@@ -176,6 +177,18 @@ export default function Launcher() {
         };
     }, []);
 
+    useEffect(() => {
+        let unlisten: (() => void) | null = null;
+        listen<string>("addon-reload-required", () => {
+            setAddonReloadOpen(true);
+        }).then((stop) => {
+            unlisten = stop;
+        });
+        return () => {
+            if (unlisten) unlisten();
+        };
+    }, []);
+
     const handleHeaderDrag = async (event: MouseEvent<HTMLElement>) => {
         if (event.button !== 0) return;
         const target = event.target as HTMLElement | null;
@@ -222,6 +235,7 @@ export default function Launcher() {
     };
 
     const onPrimary = async () => {
+        if (addonReloadOpen) return;
         if (status.canLaunch) {
             const launched = await actions.launch();
             if (launched) {
@@ -373,16 +387,30 @@ export default function Launcher() {
                         <div className={styles.primary}>
                             <PrimaryButton
                                 label={status.primaryLabel}
-                                disabled={!status.primaryEnabled}
+                                disabled={!status.primaryEnabled || addonReloadOpen}
                                 tone={primaryTone as any}
                                 onClick={onPrimary}
                             />
                             <div className={styles.row}>
-                                <button className={styles.linkBtn} onClick={actions.forceRecheck}>
+                                <button
+                                    className={styles.linkBtn}
+                                    onClick={() => {
+                                        if (addonReloadOpen) return;
+                                        actions.forceRecheck();
+                                    }}
+                                    disabled={addonReloadOpen}
+                                >
                                     Force recheck
                                 </button>
                                 <span className={styles.sep} />
-                                <button className={styles.linkBtn} onClick={() => setLogsOpen(true)}>
+                                <button
+                                    className={styles.linkBtn}
+                                    onClick={() => {
+                                        if (addonReloadOpen) return;
+                                        setLogsOpen(true);
+                                    }}
+                                    disabled={addonReloadOpen}
+                                >
                                     View details
                                 </button>
                             </div>
@@ -463,6 +491,32 @@ export default function Launcher() {
                                 <button className={styles.ghostBtn} onClick={() => setLogsOpen(true)}>
                                     Open logs
                                 </button>
+                            </div>
+                        </div>
+                    </Modal>
+
+                    <Modal
+                        open={addonReloadOpen}
+                        title="Addon Installed"
+                        onClose={() => setAddonReloadOpen(false)}
+                        showClose={false}
+                        closeOnBackdrop={false}
+                        modalClassName={styles.addonModal}
+                        bodyClassName={styles.addonModalBody}
+                    >
+                        <div className={styles.addonModalContent}>
+                            <div className={styles.addonModalStatus}>Action required</div>
+                            <div className={styles.addonModalMessage}>
+                                World of Warcraft is currently running. The PvP Scalpel addon was installed or
+                                updated. To activate it, reload your UI in-game.
+                            </div>
+                            <div className={styles.addonModalHint}>
+                                Type /reload in the chat or relog your character.
+                            </div>
+                            <div className={styles.addonModalActions}>
+                                <div className={styles.addonModalActionButton}>
+                                    <PrimaryButton label="OK" onClick={() => setAddonReloadOpen(false)} />
+                                </div>
                             </div>
                         </div>
                     </Modal>
