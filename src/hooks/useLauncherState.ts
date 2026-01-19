@@ -191,6 +191,7 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     };
 
     const forceRecheck = () => {
+        invoke("invalidate_manifest_cache").catch(() => undefined);
         setDetectionTick((value) => value + 1);
     };
 

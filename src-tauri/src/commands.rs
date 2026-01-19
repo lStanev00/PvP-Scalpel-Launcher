@@ -158,6 +158,43 @@ async fn request_download_url(key: &str) -> Result<String, String> {
     Err("Download URL response was not a URL".to_string())
 }
 
+fn is_not_found_error(error: &str) -> bool {
+    error.contains("HTTP 404")
+}
+
+async fn refresh_download_cache(key: Option<&str>) -> Result<String, String> {
+    let path = match key {
+        Some(key) => format!("/CDN/download/refresh?key={}", encode(key)),
+        None => "/CDN/download/refresh".to_string(),
+    };
+    let url = format!("{}{}", API_BASE, path);
+    let client = Client::new();
+    let response = client
+        .get(url)
+        .header("600", "BasicPass")
+        .send()
+        .await
+        .map_err(|err| format!("Refresh request failed: {err}"))?;
+
+    let status = response.status();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|err| format!("Refresh response failed: {err}"))?;
+
+    let text = String::from_utf8_lossy(&bytes).trim().to_string();
+    let body = match serde_json::from_slice::<Value>(&bytes) {
+        Ok(value) => value.to_string(),
+        Err(_) => text,
+    };
+
+    if !status.is_success() {
+        return Err(format!("Refresh request failed: HTTP {status} {body}"));
+    }
+
+    Ok(body)
+}
+
 // Only allow https downloads from the CDN response.
 fn validate_https_url(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw).map_err(|err| format!("Invalid download URL: {err}"))?;
@@ -584,6 +621,17 @@ pub async fn get_manifest(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+// Clear the manifest cache to force a fresh fetch on next access.
+pub async fn invalidate_manifest_cache() {
+    if let Some(cache) = MANIFEST_CACHE.get() {
+        let mut guard = cache.lock().await;
+        guard.value = None;
+        guard.fetching = false;
+        guard.notify.notify_waiters();
+    }
+}
+
+#[tauri::command]
 // Cancel a single in-progress action; checked during download/install/verify.
 pub fn cancel_action() {
     ACTION_CANCELLED.store(true, Ordering::SeqCst);
@@ -838,12 +886,63 @@ pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResu
 
     emit_action_progress(&app, "DOWNLOADING", Some(0), "Downloading", "Download started");
     if let Err(err) = download_with_progress(&app, &url, &download_path).await {
-        emit_log(&app, &format!("Download failed: {err}"));
-        return Ok(ActionResult {
-            ok: false,
-            error_code: Some(if err == "CANCELLED" { "CANCELLED" } else { "DOWNLOAD_FAILED" }.to_string()),
-            error_message: Some(err),
-        });
+        if is_not_found_error(&err) {
+            emit_log(&app, "Download URL stale (404). Refreshing CDN cache...");
+            match refresh_download_cache(Some(manifest_key)).await {
+                Ok(body) => emit_log(&app, &format!("Download cache refreshed: {body}")),
+                Err(refresh_err) => {
+                    emit_log(&app, &format!("Download cache refresh failed: {refresh_err}"));
+                    return Ok(ActionResult {
+                        ok: false,
+                        error_code: Some("URL_REFRESH_FAILED".to_string()),
+                        error_message: Some(refresh_err),
+                    });
+                }
+            }
+
+            let download_url = match request_download_url(manifest_key).await {
+                Ok(url) => url,
+                Err(err) => {
+                    emit_log(&app, &format!("Download URL failed: {err}"));
+                    return Ok(ActionResult {
+                        ok: false,
+                        error_code: Some("URL_FAILED".to_string()),
+                        error_message: Some(err),
+                    });
+                }
+            };
+
+            let url = match validate_https_url(&download_url) {
+                Ok(url) => url,
+                Err(err) => {
+                    emit_log(&app, &format!("Download URL invalid: {err}"));
+                    return Ok(ActionResult {
+                        ok: false,
+                        error_code: Some("URL_INVALID".to_string()),
+                        error_message: Some(err),
+                    });
+                }
+            };
+
+            emit_action_progress(&app, "DOWNLOADING", Some(0), "Downloading", "Download retry started");
+            if let Err(err) = download_with_progress(&app, &url, &download_path).await {
+                emit_log(&app, &format!("Download failed: {err}"));
+                return Ok(ActionResult {
+                    ok: false,
+                    error_code: Some(
+                        if err == "CANCELLED" { "CANCELLED" } else { "DOWNLOAD_FAILED" }.to_string(),
+                    ),
+                    error_message: Some(err),
+                });
+            }
+        } else {
+            emit_log(&app, &format!("Download failed: {err}"));
+            return Ok(ActionResult {
+                ok: false,
+                error_code: Some(if err == "CANCELLED" { "CANCELLED" } else { "DOWNLOAD_FAILED" }.to_string()),
+                error_message: Some(err),
+            });
+        }
     }
 
     if let Err(_) = ensure_not_cancelled() {
