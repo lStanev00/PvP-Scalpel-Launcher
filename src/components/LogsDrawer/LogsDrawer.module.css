@@ -29,18 +29,25 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     box-shadow: var(--shadow);
     overflow: hidden;
-    max-height: 0px;
+    height: 0px;
     transform: translateY(10px);
     opacity: 0;
-    transition: max-height 240ms ease, transform 240ms ease, opacity 180ms ease;
+    transition: height 240ms ease, transform 240ms ease, opacity 180ms ease;
     pointer-events: none;
+    display: flex;
+    flex-direction: column;
 }
 
 .open .panel {
-    max-height: 300px;
     transform: translateY(0px);
     opacity: 1;
     pointer-events: auto;
+}
+
+.resizeHandle {
+    height: 8px;
+    cursor: ns-resize;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
 }
 
 .head {
@@ -65,7 +72,7 @@
 .list {
     padding: 12px 14px;
     overflow: auto;
-    max-height: 260px;
+    flex: 1;
 }
 
 .line {

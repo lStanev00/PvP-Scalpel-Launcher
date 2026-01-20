@@ -81,6 +81,11 @@
     border-color: rgba(255, 77, 79, 0.35);
 }
 
+.required {
+    background: linear-gradient(90deg, rgba(245, 165, 36, 0.9), rgba(245, 165, 36, 0.58));
+    border-color: rgba(245, 165, 36, 0.4);
+}
+
 .muted {
     background: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 255, 255, 0.12);

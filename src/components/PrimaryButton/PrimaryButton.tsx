@@ -1,7 +1,7 @@
 import styles from "./PrimaryButton.module.css";
 import clsx from "clsx";
 
-type Tone = "accent" | "danger" | "muted";
+type Tone = "accent" | "required" | "danger" | "muted";
 
 type Props = {
     label: string;
