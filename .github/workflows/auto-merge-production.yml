@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   merge-production:
@@ -58,3 +59,10 @@ jobs:
         if: steps.version_check.outputs.should_merge == 'true'
         run: |
           git push origin production
+
+      - name: Trigger production build
+        if: steps.version_check.outputs.should_merge == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run "production-tauri-msi.yml" --ref production
