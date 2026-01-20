@@ -83,7 +83,7 @@ fn emit_addon_reload_notice(app: &AppHandle) {
     let _ = app.emit_to(
         "main",
         "addon-reload-required",
-        "WoW is running. Type /reload to activate the updated addon.".to_string(),
+        "Addon installed — /reload required in-game".to_string(),
     );
 }
 
@@ -240,18 +240,18 @@ async fn download_with_progress(app: &AppHandle, url: &Url, dest: &Path) -> Resu
             if percent != last_percent || last_emit.elapsed().as_millis() > 500 {
                 last_percent = percent;
                 last_emit = Instant::now();
-                emit_action_progress(app, "DOWNLOADING", Some(percent), "Downloading", "");
+                emit_action_progress(app, "DOWNLOADING", Some(percent), "Downloading update…", "");
             }
         } else if last_emit.elapsed().as_millis() > 750 {
             last_emit = Instant::now();
-            emit_action_progress(app, "DOWNLOADING", None, "Downloading", "");
+            emit_action_progress(app, "DOWNLOADING", None, "Downloading update…", "");
         }
     }
 
     file.flush()
         .await
         .map_err(|err| format!("Download flush failed: {err}"))?;
-    emit_action_progress(app, "DOWNLOADING", Some(100), "Downloading", "Download complete");
+    emit_action_progress(app, "DOWNLOADING", Some(100), "Downloading update…", "Download complete");
     Ok(())
 }
 
@@ -808,7 +808,7 @@ fn verify_after_action(app: &AppHandle, manifest: &Value, action: &str) -> Resul
 // End-to-end action phase: request URL -> download -> install -> verify.
 pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResult, String> {
     ACTION_CANCELLED.store(false, Ordering::SeqCst);
-    emit_action_progress(&app, "REQUEST_URL", None, "Requesting download URL", "Requesting download URL");
+    emit_action_progress(&app, "REQUEST_URL", None, "Checking for updates…", "Requesting download URL");
 
     let manifest = match load_manifest().await {
         Ok((manifest, cache_hit)) => {
@@ -884,7 +884,7 @@ pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResu
     let tmp = temp_dir(&app)?;
     let download_path = tmp.join(format!("{stamp}_{filename}"));
 
-    emit_action_progress(&app, "DOWNLOADING", Some(0), "Downloading", "Download started");
+    emit_action_progress(&app, "DOWNLOADING", Some(0), "Downloading update…", "Download started");
     if let Err(err) = download_with_progress(&app, &url, &download_path).await {
         if is_not_found_error(&err) {
             emit_log(&app, "Download URL stale (404). Refreshing CDN cache...");
@@ -924,7 +924,7 @@ pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResu
                 }
             };
 
-            emit_action_progress(&app, "DOWNLOADING", Some(0), "Downloading", "Download retry started");
+            emit_action_progress(&app, "DOWNLOADING", Some(0), "Downloading update…", "Download retry started");
             if let Err(err) = download_with_progress(&app, &url, &download_path).await {
                 emit_log(&app, &format!("Download failed: {err}"));
                 return Ok(ActionResult {
@@ -952,7 +952,12 @@ pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResu
             error_message: Some("Action cancelled".to_string()),
         });
     }
-    emit_action_progress(&app, "INSTALLING", None, "Installing", "Install started");
+    let install_label = match action.as_str() {
+        "INSTALL_ADDON" | "UPDATE_ADDON" => "Installing addon…",
+        "INSTALL_DESKTOP" | "UPDATE_DESKTOP" => "Installing application…",
+        _ => "Installing update…",
+    };
+    emit_action_progress(&app, "INSTALLING", None, install_label, "Install started");
     let install_result = match action.as_str() {
         "INSTALL_DESKTOP" | "UPDATE_DESKTOP" => match run_nsis_installer(download_path.clone()).await {
             Ok(exit_code) => {
@@ -990,7 +995,7 @@ pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResu
         });
     }
 
-    emit_action_progress(&app, "VERIFYING", None, "Verifying", "Verification started");
+    emit_action_progress(&app, "VERIFYING", None, "Checking for updates…", "Verification started");
     if let Err(err) = verify_after_action(&app, &manifest, &action) {
         emit_log(&app, &format!("Verification failed: {err}"));
         return Ok(ActionResult {

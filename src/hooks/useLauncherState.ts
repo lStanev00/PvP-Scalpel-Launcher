@@ -90,12 +90,36 @@ const mapComponentState = (state: ComponentState): Health => {
 const mapIntegrity = (status: IntegrityStatus): { state: Health; label: string } => {
     switch (status) {
         case "VERIFIED":
-            return { state: "ok", label: "Verified" };
+            return { state: "ok", label: "You're up to date" };
         case "CHECKING":
-            return { state: "checking", label: "Checking" };
+            return { state: "checking", label: "Checking for updates…" };
         default:
-            return { state: "required", label: "Incomplete" };
+            return { state: "required", label: "Update available" };
     }
+};
+
+const progressLabelForPhase = (phase: ActionPhase, target: ActionTarget) => {
+    switch (phase) {
+        case "REQUEST_URL":
+        case "VERIFYING":
+            return "Checking for updates…";
+        case "DOWNLOADING":
+            return "Downloading update…";
+        case "INSTALLING":
+            if (target === "addon") return "Installing addon…";
+            if (target === "desktop") return "Installing application…";
+            return "Installing update…";
+        case "ERROR":
+            return "Something went wrong";
+        default:
+            return "";
+    }
+};
+
+const progressDetailForPhase = (phase: ActionPhase) => {
+    if (phase === "DOWNLOADING") return "This may take a moment";
+    if (phase === "ERROR") return "Please try again";
+    return "";
 };
 
 const resolveComponent = ({
@@ -153,13 +177,13 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         setActionTarget(target);
         setActionPhase("REQUEST_URL");
         setActionProgress(null);
-        setActionMessage("Requesting download URL");
+        setActionMessage("Checking for updates…");
 
         invoke<ActionResult>("perform_action", { action: requiredAction })
             .then((result) => {
                 if (!result.ok) {
                     setActionPhase("ERROR");
-                    setActionMessage(result.errorMessage ?? "Action failed");
+                    setActionMessage("Something went wrong");
                     setActionTarget(null);
                     return;
                 }
@@ -171,7 +195,7 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
             })
             .catch((err) => {
                 setActionPhase("ERROR");
-                setActionMessage(String(err));
+                setActionMessage("Something went wrong");
                 setActionTarget(null);
             });
     };
@@ -179,7 +203,7 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     const cancelUpdate = () => {
         invoke("cancel_action").catch(() => undefined);
         setActionPhase("ERROR");
-        setActionMessage("Action cancelled");
+        setActionMessage("Something went wrong");
         setActionTarget(null);
     };
 
@@ -347,7 +371,9 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
             ? "required"
             : "muted";
 
-    const integrity = mapIntegrity(resolved.integrityStatus);
+    const integrity = hasError
+        ? { state: "error", label: "Something went wrong" }
+        : mapIntegrity(resolved.integrityStatus);
     const progressActive = resolved.showProgressBar;
     const status: LauncherStatus = {
         desktop: { state: mapComponentState(desktopComponent), version: desktopVersion, target: desktopTarget },
@@ -357,8 +383,8 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         progress: {
             active: progressActive,
             percent: progressActive ? actionProgress ?? 0 : 0,
-            label: progressActive ? actionMessage : "",
-            detail: progressActive ? actionPhase : "",
+            label: progressActive ? progressLabelForPhase(actionPhase, actionTarget) || actionMessage : "",
+            detail: progressActive ? progressDetailForPhase(actionPhase) : "",
             rate: "",
         },
         canLaunch,

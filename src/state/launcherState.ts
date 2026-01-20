@@ -49,23 +49,23 @@ export function resolveLauncherState(components: ComponentsState): ResolvedLaunc
 
     const showProgressBar = anyUpdating;
 
-    let primaryActionLabel = "CHECK STATUS";
+    let primaryActionLabel = "Update";
     if (anyUpdating) {
-        primaryActionLabel = "UPDATING";
+        primaryActionLabel = "Update";
     } else if (anyChecking) {
-        primaryActionLabel = "CHECKING";
+        primaryActionLabel = "Update";
     } else if (anyError) {
-        primaryActionLabel = "FIX REQUIRED";
+        primaryActionLabel = "Retry";
     } else if (desktopNotInstalled) {
-        primaryActionLabel = "INSTALL DESKTOP APP";
+        primaryActionLabel = "Update";
     } else if (desktopOutdated) {
-        primaryActionLabel = "UPDATE DESKTOP APP";
+        primaryActionLabel = "Update";
     } else if (addonNotInstalled) {
-        primaryActionLabel = "INSTALL ADDON";
+        primaryActionLabel = "Update";
     } else if (addonOutdated) {
-        primaryActionLabel = "UPDATE ADDON";
+        primaryActionLabel = "Update";
     } else if (allOk) {
-        primaryActionLabel = "LAUNCH PvP SCALPEL";
+        primaryActionLabel = "Launch";
     }
 
     const primaryActionEnabled = !anyChecking && !anyUpdating && !anyError;

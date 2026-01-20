@@ -140,7 +140,7 @@ export default function Launcher() {
             ? status.progress.label
             : status.canLaunch
               ? "Ready"
-              : "Locked";
+              : "Update available";
         invoke("update_tray_state", {
             canLaunch: status.canLaunch,
             statusText,
@@ -435,17 +435,19 @@ export default function Launcher() {
                         </div>
 
                         <div className={styles.card}>
-                            <div className={styles.cardTitle}>Patch Notes</div>
+                            <div className={styles.cardTitle}>What's new</div>
                             <div className={styles.note}>
-                                <div className={styles.noteHead}>v1.4.2</div>
+                                <div className={styles.noteHead}>Version 1.4.2</div>
                                 <div className={styles.noteText}>
-                                    Improved addon sync, faster integrity verification, and cleaner error handling.
+                                    Added: Automatic addon updates were added. Fixed: Downloads that stalled the
+                                    launcher were fixed.
                                 </div>
                             </div>
                             <div className={styles.note}>
-                                <div className={styles.noteHead}>v1.4.1</div>
+                                <div className={styles.noteHead}>Version 1.4.1</div>
                                 <div className={styles.noteText}>
-                                    Launcher UI overhaul and tighter update gating for safe launches.
+                                    Added: Safer update checks were added. Fixed: Launches that unlocked too early
+                                    were fixed.
                                 </div>
                             </div>
                         </div>
@@ -505,14 +507,9 @@ export default function Launcher() {
                         bodyClassName={styles.addonModalBody}
                     >
                         <div className={styles.addonModalContent}>
-                            <div className={styles.addonModalStatus}>Action required</div>
-                            <div className={styles.addonModalMessage}>
-                                World of Warcraft is currently running. The PvP Scalpel addon was installed or
-                                updated. To activate it, reload your UI in-game.
-                            </div>
-                            <div className={styles.addonModalHint}>
-                                Type /reload in the chat or relog your character.
-                            </div>
+                            <div className={styles.addonModalStatus}>Addon installed — /reload required in-game</div>
+                            <div className={styles.addonModalMessage}></div>
+                            <div className={styles.addonModalHint}></div>
                             <div className={styles.addonModalActions}>
                                 <div className={styles.addonModalActionButton}>
                                     <PrimaryButton label="OK" onClick={() => setAddonReloadOpen(false)} />
