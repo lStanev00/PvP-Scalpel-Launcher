@@ -24,14 +24,21 @@
     background: radial-gradient(circle at 30% 30%, rgba(58, 210, 159, 0.9), transparent 65%);
 }
 
-.updating::before {
+.checking::before {
     background: radial-gradient(circle at 30% 30%, rgba(58, 167, 255, 0.95), transparent 65%);
+}
+
+.updating::before {
+    background: radial-gradient(circle at 30% 30%, rgba(56, 209, 200, 0.95), transparent 65%);
 }
 
 .error::before {
     background: radial-gradient(circle at 30% 30%, rgba(255, 77, 79, 0.95), transparent 65%);
 }
 
+.required::before {
+    background: radial-gradient(circle at 30% 30%, rgba(245, 165, 36, 0.95), transparent 65%);
+}
 .top {
     display: flex;
     align-items: center;
@@ -68,9 +75,14 @@
     box-shadow: 0 0 18px rgba(58, 210, 159, 0.55);
 }
 
-.updating .dot {
+.checking .dot {
     background: rgba(58, 167, 255, 0.95);
     box-shadow: 0 0 18px rgba(58, 167, 255, 0.55);
+}
+
+.updating .dot {
+    background: rgba(56, 209, 200, 0.95);
+    box-shadow: 0 0 18px rgba(56, 209, 200, 0.55);
 }
 
 .error .dot {
@@ -78,6 +90,10 @@
     box-shadow: 0 0 18px rgba(255, 77, 79, 0.55);
 }
 
+.required .dot {
+    background: rgba(245, 165, 36, 0.95);
+    box-shadow: 0 0 18px rgba(245, 165, 36, 0.55);
+}
 .badgeText {
     font-family: var(--mono);
     font-size: 11px;

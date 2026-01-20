@@ -5,21 +5,39 @@ type Props = {
     title: string;
     children: React.ReactNode;
     onClose: () => void;
+    showClose?: boolean;
+    closeOnBackdrop?: boolean;
+    modalClassName?: string;
+    bodyClassName?: string;
 };
 
-export function Modal({ open, title, children, onClose }: Props) {
+export function Modal({
+    open,
+    title,
+    children,
+    onClose,
+    showClose = true,
+    closeOnBackdrop = true,
+    modalClassName,
+    bodyClassName,
+}: Props) {
     if (!open) return null;
 
+    const modalClass = [styles.modal, modalClassName].filter(Boolean).join(" ");
+    const bodyClass = [styles.body, bodyClassName].filter(Boolean).join(" ");
+
     return (
-        <div className={styles.backdrop} onMouseDown={onClose}>
-            <div className={styles.modal} onMouseDown={(e) => e.stopPropagation()}>
+        <div className={styles.backdrop} onMouseDown={closeOnBackdrop ? onClose : undefined}>
+            <div className={modalClass} onMouseDown={(event) => event.stopPropagation()}>
                 <div className={styles.header}>
                     <div className={styles.title}>{title}</div>
-                    <button className={styles.x} onClick={onClose}>
-                        ✕
-                    </button>
+                    {showClose ? (
+                        <button className={styles.x} onClick={onClose} aria-label="Close dialog">
+                            X
+                        </button>
+                    ) : null}
                 </div>
-                <div className={styles.body}>{children}</div>
+                <div className={bodyClass}>{children}</div>
             </div>
         </div>
     );

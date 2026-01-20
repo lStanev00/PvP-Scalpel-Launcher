@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -22,6 +22,7 @@ export default function Launcher() {
     const [showUi, setShowUi] = useState(false);
     const [introCycle, setIntroCycle] = useState(0);
     const [forceIntro, setForceIntro] = useState(true);
+    const [addonReloadOpen, setAddonReloadOpen] = useState(false);
     const [minimizeToTray, setMinimizeToTray] = useState(() => {
         const stored = localStorage.getItem("minimizeToTray");
         return stored ? stored === "true" : true;
@@ -32,16 +33,7 @@ export default function Launcher() {
     const revealTimerRef = useRef<number | null>(null);
     const introDoneRef = useRef(false);
 
-    const primaryTone = useMemo(() => {
-        if (status.canLaunch) return "accent";
-        if (
-            status.desktop.state === "error" ||
-            status.addon.state === "error" ||
-            status.integrity.state === "error"
-        )
-            return "danger";
-        return "muted";
-    }, [status]);
+    const primaryTone = status.primaryTone;
 
     const getAppWindow = () => {
         try {
@@ -148,7 +140,7 @@ export default function Launcher() {
             ? status.progress.label
             : status.canLaunch
               ? "Ready"
-              : "Locked";
+              : "Update available";
         invoke("update_tray_state", {
             canLaunch: status.canLaunch,
             statusText,
@@ -159,7 +151,12 @@ export default function Launcher() {
         let unlisten: (() => void) | null = null;
         listen("tray-launch", async () => {
             await showFromTray();
-            if (status.canLaunch) actions.launch();
+            if (status.canLaunch) {
+                const launched = await actions.launch();
+                if (launched) {
+                    await exitApp();
+                }
+            }
         }).then((stop) => {
             unlisten = stop;
         });
@@ -172,6 +169,18 @@ export default function Launcher() {
         let unlisten: (() => void) | null = null;
         listen("tray-show", () => {
             showFromTray();
+        }).then((stop) => {
+            unlisten = stop;
+        });
+        return () => {
+            if (unlisten) unlisten();
+        };
+    }, []);
+
+    useEffect(() => {
+        let unlisten: (() => void) | null = null;
+        listen<string>("addon-reload-required", () => {
+            setAddonReloadOpen(true);
         }).then((stop) => {
             unlisten = stop;
         });
@@ -225,9 +234,13 @@ export default function Launcher() {
         }
     };
 
-    const onPrimary = () => {
+    const onPrimary = async () => {
+        if (addonReloadOpen) return;
         if (status.canLaunch) {
-            actions.launch();
+            const launched = await actions.launch();
+            if (launched) {
+                await exitApp();
+            }
             return;
         }
         if (primaryTone === "danger") {
@@ -359,29 +372,45 @@ export default function Launcher() {
                             />
                         </div>
 
-                        <div className={styles.progress}>
-                            <ProgressBar
-                                percent={status.progress.percent}
-                                active={status.progress.active}
-                                label={status.progress.label}
-                                detail={status.progress.detail}
-                                rate={status.progress.rate}
-                            />
-                        </div>
+                        {status.progress.active ? (
+                            <div className={styles.progress}>
+                                <ProgressBar
+                                    percent={status.progress.percent}
+                                    active={status.progress.active}
+                                    label={status.progress.label}
+                                    detail={status.progress.detail}
+                                    rate={status.progress.rate}
+                                />
+                            </div>
+                        ) : null}
 
                         <div className={styles.primary}>
                             <PrimaryButton
                                 label={status.primaryLabel}
-                                disabled={!status.canLaunch && primaryTone !== "danger"}
+                                disabled={!status.primaryEnabled || addonReloadOpen}
                                 tone={primaryTone as any}
                                 onClick={onPrimary}
                             />
                             <div className={styles.row}>
-                                <button className={styles.linkBtn} onClick={actions.forceRecheck}>
+                                <button
+                                    className={styles.linkBtn}
+                                    onClick={() => {
+                                        if (addonReloadOpen) return;
+                                        actions.forceRecheck();
+                                    }}
+                                    disabled={addonReloadOpen}
+                                >
                                     Force recheck
                                 </button>
                                 <span className={styles.sep} />
-                                <button className={styles.linkBtn} onClick={() => setLogsOpen(true)}>
+                                <button
+                                    className={styles.linkBtn}
+                                    onClick={() => {
+                                        if (addonReloadOpen) return;
+                                        setLogsOpen(true);
+                                    }}
+                                    disabled={addonReloadOpen}
+                                >
                                     View details
                                 </button>
                             </div>
@@ -406,17 +435,19 @@ export default function Launcher() {
                         </div>
 
                         <div className={styles.card}>
-                            <div className={styles.cardTitle}>Patch Notes</div>
+                            <div className={styles.cardTitle}>What's new</div>
                             <div className={styles.note}>
-                                <div className={styles.noteHead}>v1.4.2</div>
+                                <div className={styles.noteHead}>Version 1.4.2</div>
                                 <div className={styles.noteText}>
-                                    Improved addon sync, faster integrity verification, and cleaner error handling.
+                                    Added: Automatic addon updates were added. Fixed: Downloads that stalled the
+                                    launcher were fixed.
                                 </div>
                             </div>
                             <div className={styles.note}>
-                                <div className={styles.noteHead}>v1.4.1</div>
+                                <div className={styles.noteHead}>Version 1.4.1</div>
                                 <div className={styles.noteText}>
-                                    Launcher UI overhaul and tighter update gating for safe launches.
+                                    Added: Safer update checks were added. Fixed: Launches that unlocked too early
+                                    were fixed.
                                 </div>
                             </div>
                         </div>
@@ -462,6 +493,27 @@ export default function Launcher() {
                                 <button className={styles.ghostBtn} onClick={() => setLogsOpen(true)}>
                                     Open logs
                                 </button>
+                            </div>
+                        </div>
+                    </Modal>
+
+                    <Modal
+                        open={addonReloadOpen}
+                        title="Addon Installed"
+                        onClose={() => setAddonReloadOpen(false)}
+                        showClose={false}
+                        closeOnBackdrop={false}
+                        modalClassName={styles.addonModal}
+                        bodyClassName={styles.addonModalBody}
+                    >
+                        <div className={styles.addonModalContent}>
+                            <div className={styles.addonModalStatus}>Addon installed — /reload required in-game</div>
+                            <div className={styles.addonModalMessage}></div>
+                            <div className={styles.addonModalHint}></div>
+                            <div className={styles.addonModalActions}>
+                                <div className={styles.addonModalActionButton}>
+                                    <PrimaryButton label="OK" onClick={() => setAddonReloadOpen(false)} />
+                                </div>
                             </div>
                         </div>
                     </Modal>

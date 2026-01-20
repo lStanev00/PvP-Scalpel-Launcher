@@ -121,8 +121,18 @@ pub fn run() {
             commands::get_wow_path,
             commands::get_desktop_path,
             commands::get_desktop_version,
-            commands::get_addon_version
+            commands::get_addon_version,
+            commands::launch_desktop_app,
+            commands::get_manifest,
+            commands::invalidate_manifest_cache,
+            commands::cancel_action,
+            commands::perform_action,
+            commands::get_launcher_snapshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+
+
+
