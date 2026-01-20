@@ -194,6 +194,7 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
                 setDetectionTick((value) => value + 1);
             })
             .catch((err) => {
+                console.warn(err)
                 setActionPhase("ERROR");
                 setActionMessage("Something went wrong");
                 setActionTarget(null);
@@ -371,9 +372,8 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
             ? "required"
             : "muted";
 
-    const integrity = hasError
-        ? { state: "error", label: "Something went wrong" }
-        : mapIntegrity(resolved.integrityStatus);
+    const errorIntegrity: { state: Health; label: string } = { state: "error", label: "Something went wrong" };
+    const integrity = hasError ? errorIntegrity : mapIntegrity(resolved.integrityStatus);
     const progressActive = resolved.showProgressBar;
     const status: LauncherStatus = {
         desktop: { state: mapComponentState(desktopComponent), version: desktopVersion, target: desktopTarget },
