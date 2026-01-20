@@ -1,0 +1,60 @@
+name: Auto Merge Main -> Production (Tauri Version Bump)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src-tauri/tauri.conf.json
+
+permissions:
+  contents: write
+
+jobs:
+  merge-production:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Compare tauri.conf.json versions
+        id: version_check
+        run: |
+          set -euo pipefail
+          git fetch origin production
+          MAIN_VERSION=$(node -e "const fs=require('fs');const data=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));console.log(data.version)")
+          PROD_JSON=$(git show origin/production:src-tauri/tauri.conf.json 2>/dev/null || echo '{}')
+          PROD_VERSION=$(node -e "const fs=require('fs');const data=JSON.parse(fs.readFileSync(0,'utf8'));console.log(data.version || '')" <<< "$PROD_JSON")
+          echo "main_version=$MAIN_VERSION" >> $GITHUB_OUTPUT
+          echo "prod_version=$PROD_VERSION" >> $GITHUB_OUTPUT
+          if [ "$MAIN_VERSION" = "$PROD_VERSION" ]; then
+            echo "Version unchanged; skipping merge."
+            echo "should_merge=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "should_merge=true" >> $GITHUB_OUTPUT
+
+      - name: Configure git
+        if: steps.version_check.outputs.should_merge == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main into production
+        if: steps.version_check.outputs.should_merge == 'true'
+        run: |
+          git fetch origin production
+          git checkout production
+          git merge --no-ff --no-edit origin/main
+
+      - name: Push production
+        if: steps.version_check.outputs.should_merge == 'true'
+        run: |
+          git push origin production
