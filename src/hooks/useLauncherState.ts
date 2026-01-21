@@ -330,7 +330,12 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         let cancelled = false;
 
         const loadState = async () => {
-            if (selfUpdateStatus !== "UP_TO_DATE") {
+            const blockForSelfUpdate =
+                selfUpdateStatus === "UPDATE_REQUIRED" ||
+                selfUpdateStatus === "DOWNLOADING" ||
+                selfUpdateStatus === "INSTALLING" ||
+                selfUpdateStatus === "ERROR";
+            if (blockForSelfUpdate) {
                 setDetectionPhase("IDLE");
                 return;
             }
@@ -460,14 +465,20 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     const errorIntegrity: { state: Health; label: string } = { state: "error", label: "Something went wrong" };
     const integrity = hasError ? errorIntegrity : mapIntegrity(resolved.integrityStatus);
     const progressActive = resolved.showProgressBar;
-    const selfUpdateBlocking = selfUpdateStatus !== "UP_TO_DATE";
+    const selfUpdateBlocking =
+        selfUpdateStatus === "UPDATE_REQUIRED" ||
+        selfUpdateStatus === "DOWNLOADING" ||
+        selfUpdateStatus === "INSTALLING" ||
+        selfUpdateStatus === "ERROR";
     const selfUpdateShowProgress = selfUpdateStatus === "DOWNLOADING" || selfUpdateStatus === "INSTALLING";
     const selfUpdateTitle =
         selfUpdateStatus === "ERROR"
             ? "Something went wrong"
-            : selfUpdateStatus === "CHECKING"
-              ? "Checking for updates…"
-              : "Launcher update required";
+            : selfUpdateStatus === "UPDATE_REQUIRED" ||
+                selfUpdateStatus === "DOWNLOADING" ||
+                selfUpdateStatus === "INSTALLING"
+              ? "Launcher update required"
+              : "";
     const selfUpdateDetail = selfUpdateStatus === "ERROR" ? "Please try again" : "";
     const selfUpdateProgressLabel =
         selfUpdateStatus === "DOWNLOADING"
@@ -520,6 +531,7 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
 
     return { status, actions };
 }
+
 
 
 
