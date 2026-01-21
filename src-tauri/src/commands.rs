@@ -64,6 +64,15 @@ pub struct ActionResult {
     error_message: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateState {
+    status: String,
+    local_version: Option<String>,
+    remote_version: Option<String>,
+    error_message: Option<String>,
+}
+
 // Emit log lines for the frontend to consume.
 fn emit_log(app: &AppHandle, message: &str) {
     let _ = app.emit_to("main", "launcher-log", message.to_string());
@@ -77,6 +86,16 @@ fn emit_action_progress(app: &AppHandle, phase: &str, progress: Option<u64>, mes
         log: log.to_string(),
     };
     let _ = app.emit_to("main", "action-progress", payload);
+}
+
+fn emit_launcher_update_progress(app: &AppHandle, phase: &str, progress: Option<u64>, message: &str, log: &str) {
+    let payload = ActionProgress {
+        phase: phase.to_string(),
+        progress,
+        message: message.to_string(),
+        log: log.to_string(),
+    };
+    let _ = app.emit_to("main", "launcher-update-progress", payload);
 }
 
 fn emit_addon_reload_notice(app: &AppHandle) {
@@ -114,6 +133,16 @@ fn temp_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let tmp = base.join("tmp");
     fs::create_dir_all(&tmp).map_err(|err| format!("Failed to create temp dir: {err}"))?;
     Ok(tmp)
+}
+
+fn launcher_update_msi_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("Failed to resolve app data dir: {err}"))?;
+    let updates = base.join("updates");
+    fs::create_dir_all(&updates).map_err(|err| format!("Failed to create updates dir: {err}"))?;
+    Ok(updates.join("launcher_update.msi"))
 }
 
 // Ask the API for a CDN download URL for the given key.
@@ -252,6 +281,55 @@ async fn download_with_progress(app: &AppHandle, url: &Url, dest: &Path) -> Resu
         .await
         .map_err(|err| format!("Download flush failed: {err}"))?;
     emit_action_progress(app, "DOWNLOADING", Some(100), "Downloading update…", "Download complete");
+    Ok(())
+}
+
+async fn download_launcher_with_progress(app: &AppHandle, url: &Url, dest: &Path) -> Result<(), String> {
+    let client = Client::new();
+    let response = client
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|err| format!("Download failed: {err}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("Download failed: HTTP {status}"));
+    }
+
+    let total = response.content_length();
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .map_err(|err| format!("Failed to create download file: {err}"))?;
+    let mut downloaded: u64 = 0;
+    let mut last_percent: u64 = 0;
+    let mut last_emit = Instant::now();
+
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| format!("Download stream failed: {err}"))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|err| format!("Download write failed: {err}"))?;
+        downloaded += chunk.len() as u64;
+
+        if let Some(total) = total {
+            let percent = (downloaded.saturating_mul(100) / total).min(100);
+            if percent != last_percent || last_emit.elapsed().as_millis() > 500 {
+                last_percent = percent;
+                last_emit = Instant::now();
+                emit_launcher_update_progress(app, "DOWNLOADING", Some(percent), "Downloading update…", "");
+            }
+        } else if last_emit.elapsed().as_millis() > 750 {
+            last_emit = Instant::now();
+            emit_launcher_update_progress(app, "DOWNLOADING", None, "Downloading update…", "");
+        }
+    }
+
+    file.flush()
+        .await
+        .map_err(|err| format!("Download flush failed: {err}"))?;
+    emit_launcher_update_progress(app, "DOWNLOADING", Some(100), "Downloading update…", "Download complete");
     Ok(())
 }
 
@@ -440,6 +518,46 @@ pub fn get_desktop_version(app: AppHandle) -> Option<String> {
     result
 }
 
+fn read_launcher_version() -> Option<String> {
+    let uninstall_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+    let version_values = ["DisplayVersion", "Version", "ProductVersion"];
+    let hives = [Hive::CurrentUser, Hive::LocalMachine];
+
+    for hive in hives {
+        let root = match hive.open(uninstall_key, Security::Read) {
+            Ok(key) => key,
+            Err(_) => continue,
+        };
+        let keys = match root.keys().collect::<Result<Vec<_>, _>>() {
+            Ok(keys) => keys,
+            Err(_) => continue,
+        };
+
+        for key_ref in keys {
+            let subkey = match key_ref.open(Security::Read) {
+                Ok(key) => key,
+                Err(_) => continue,
+            };
+            let display = match subkey.value("DisplayName") {
+                Ok(Data::String(name)) => name.to_string_lossy().to_string(),
+                _ => continue,
+            };
+            let display_lower = display.to_lowercase();
+            if !(display_lower.contains("pvp") && display_lower.contains("launcher")) {
+                continue;
+            }
+
+            for value in version_values {
+                if let Ok(Data::String(version)) = subkey.value(value) {
+                    return Some(version.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 // Resolve the desktop executable path based on registry metadata.
 fn find_desktop_exe() -> Option<PathBuf> {
     let keys = [
@@ -621,6 +739,77 @@ pub async fn get_manifest(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub async fn get_launcher_update_state(app: AppHandle) -> Result<LauncherUpdateState, String> {
+    let local_version = read_launcher_version();
+    let manifest = match load_manifest().await {
+        Ok((manifest, cache_hit)) => {
+            if cache_hit {
+                emit_log(&app, "Manifest loaded (cache)");
+            } else {
+                emit_log(&app, "Manifest fetched");
+            }
+            manifest
+        }
+        Err(err) => {
+            emit_log(&app, &format!("Manifest load failed: {err}"));
+            return Ok(LauncherUpdateState {
+                status: "ERROR".to_string(),
+                local_version,
+                remote_version: None,
+                error_message: Some(err),
+            });
+        }
+    };
+
+    let remote_version = manifest_entry_version(&manifest, "launcher");
+
+    if let (Some(local), Some(remote)) = (&local_version, &remote_version) {
+        if local == remote {
+            if let Ok(msi_path) = launcher_update_msi_path(&app) {
+                if msi_path.is_file() {
+                    if let Err(err) = fs::remove_file(&msi_path) {
+                        emit_log(&app, &format!("Launcher MSI cleanup failed: {err}"));
+                    } else {
+                        emit_log(&app, "Launcher MSI cleanup complete");
+                    }
+                }
+            }
+        }
+    }
+
+    if local_version.is_none() {
+        return Ok(LauncherUpdateState {
+            status: "UPDATE_REQUIRED".to_string(),
+            local_version,
+            remote_version,
+            error_message: None,
+        });
+    }
+
+    if remote_version.is_none() {
+        return Ok(LauncherUpdateState {
+            status: "ERROR".to_string(),
+            local_version,
+            remote_version,
+            error_message: Some("Launcher version missing from manifest".to_string()),
+        });
+    }
+
+    let status = if local_version == remote_version {
+        "UP_TO_DATE"
+    } else {
+        "UPDATE_REQUIRED"
+    };
+
+    Ok(LauncherUpdateState {
+        status: status.to_string(),
+        local_version,
+        remote_version,
+        error_message: None,
+    })
+}
+
+#[tauri::command]
 // Clear the manifest cache to force a fresh fetch on next access.
 pub async fn invalidate_manifest_cache() {
     if let Some(cache) = MANIFEST_CACHE.get() {
@@ -689,6 +878,15 @@ async fn run_nsis_installer(path: PathBuf) -> Result<i32, String> {
     })
     .await
     .map_err(|err| format!("Installer task failed: {err}"))?
+}
+
+fn spawn_msi_installer(path: &Path) -> Result<(), String> {
+    Command::new("msiexec")
+        .arg("/i")
+        .arg(path)
+        .spawn()
+        .map_err(|err| format!("MSI failed to start: {err}"))?;
+    Ok(())
 }
 
 // Extract addon archive, normalize layout, and replace the target addon folder.
@@ -1007,6 +1205,115 @@ pub async fn perform_action(app: AppHandle, action: String) -> Result<ActionResu
 
     emit_log(&app, "Verification complete");
     let _ = fs::remove_file(&download_path);
+    Ok(ActionResult {
+        ok: true,
+        error_code: None,
+        error_message: None,
+    })
+}
+
+#[tauri::command]
+pub async fn perform_launcher_update(app: AppHandle) -> Result<ActionResult, String> {
+    emit_launcher_update_progress(&app, "DOWNLOADING", Some(0), "Downloading update…", "Download started");
+
+    let download_url = match request_download_url("launcher").await {
+        Ok(url) => url,
+        Err(err) => {
+            emit_log(&app, &format!("Download URL failed: {err}"));
+            return Ok(ActionResult {
+                ok: false,
+                error_code: Some("URL_FAILED".to_string()),
+                error_message: Some(err),
+            });
+        }
+    };
+
+    let url = match validate_https_url(&download_url) {
+        Ok(url) => url,
+        Err(err) => {
+            emit_log(&app, &format!("Download URL invalid: {err}"));
+            return Ok(ActionResult {
+                ok: false,
+                error_code: Some("URL_INVALID".to_string()),
+                error_message: Some(err),
+            });
+        }
+    };
+
+    let download_path = launcher_update_msi_path(&app)?;
+    if download_path.exists() {
+        let _ = fs::remove_file(&download_path);
+    }
+
+    if let Err(err) = download_launcher_with_progress(&app, &url, &download_path).await {
+        if is_not_found_error(&err) {
+            emit_log(&app, "Download URL stale (404). Refreshing CDN cache...");
+            match refresh_download_cache(Some("launcher")).await {
+                Ok(body) => emit_log(&app, &format!("Download cache refreshed: {body}")),
+                Err(refresh_err) => {
+                    emit_log(&app, &format!("Download cache refresh failed: {refresh_err}"));
+                    return Ok(ActionResult {
+                        ok: false,
+                        error_code: Some("URL_REFRESH_FAILED".to_string()),
+                        error_message: Some(refresh_err),
+                    });
+                }
+            }
+
+            let download_url = match request_download_url("launcher").await {
+                Ok(url) => url,
+                Err(err) => {
+                    emit_log(&app, &format!("Download URL failed: {err}"));
+                    return Ok(ActionResult {
+                        ok: false,
+                        error_code: Some("URL_FAILED".to_string()),
+                        error_message: Some(err),
+                    });
+                }
+            };
+
+            let url = match validate_https_url(&download_url) {
+                Ok(url) => url,
+                Err(err) => {
+                    emit_log(&app, &format!("Download URL invalid: {err}"));
+                    return Ok(ActionResult {
+                        ok: false,
+                        error_code: Some("URL_INVALID".to_string()),
+                        error_message: Some(err),
+                    });
+                }
+            };
+
+            emit_launcher_update_progress(&app, "DOWNLOADING", Some(0), "Downloading update…", "Download retry started");
+            if let Err(err) = download_launcher_with_progress(&app, &url, &download_path).await {
+                emit_log(&app, &format!("Download failed: {err}"));
+                return Ok(ActionResult {
+                    ok: false,
+                    error_code: Some("DOWNLOAD_FAILED".to_string()),
+                    error_message: Some(err),
+                });
+            }
+        } else {
+            emit_log(&app, &format!("Download failed: {err}"));
+            return Ok(ActionResult {
+                ok: false,
+                error_code: Some("DOWNLOAD_FAILED".to_string()),
+                error_message: Some(err),
+            });
+        }
+    }
+
+    emit_launcher_update_progress(&app, "INSTALLING", None, "Installing update…", "Installer launched");
+    if let Err(err) = spawn_msi_installer(&download_path) {
+        emit_log(&app, &format!("Installer failed: {err}"));
+        return Ok(ActionResult {
+            ok: false,
+            error_code: Some("INSTALL_FAILED".to_string()),
+            error_message: Some(err),
+        });
+    }
+
+    app.exit(0);
     Ok(ActionResult {
         ok: true,
         error_code: None,

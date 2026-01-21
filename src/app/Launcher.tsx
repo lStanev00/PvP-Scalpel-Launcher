@@ -250,6 +250,49 @@ export default function Launcher() {
         actions.startUpdate();
     };
 
+    if (status.selfUpdate.blocking) {
+        const handleSelfUpdate = () => {
+            if (!status.selfUpdate.actionEnabled) return;
+            if (status.selfUpdate.status === "ERROR") {
+                actions.retryLauncherUpdate();
+                return;
+            }
+            actions.startLauncherUpdate();
+        };
+        return (
+            <div className={styles.shell}>
+                <div className={styles.bgNoise} />
+                <div className={styles.frame} style={{ boxShadow: "none" }}>
+                    <div className={styles.selfUpdate}>
+                        <div className={styles.selfUpdateTitle}>{status.selfUpdate.title}</div>
+                        {status.selfUpdate.detail ? (
+                            <div className={styles.selfUpdateDetail}>{status.selfUpdate.detail}</div>
+                        ) : null}
+                        {status.selfUpdate.showProgress ? (
+                            <div className={styles.selfUpdateProgress}>
+                                <ProgressBar
+                                    percent={status.selfUpdate.progressPercent}
+                                    active={status.selfUpdate.showProgress}
+                                    label={status.selfUpdate.progressLabel}
+                                    detail=""
+                                />
+                            </div>
+                        ) : null}
+                        <div className={styles.selfUpdateActions}>
+                            <div className={styles.selfUpdateButton}>
+                                <PrimaryButton
+                                    label={status.selfUpdate.actionLabel}
+                                    disabled={!status.selfUpdate.actionEnabled}
+                                    onClick={handleSelfUpdate}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className={styles.shell}>
             <div className={styles.bgNoise} />
