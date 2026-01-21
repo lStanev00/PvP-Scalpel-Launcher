@@ -27,6 +27,39 @@
     position: relative;
 }
 
+.selfUpdate {
+    display: grid;
+    place-items: center;
+    gap: 16px;
+    height: 100%;
+    padding: 32px;
+    text-align: center;
+}
+
+.selfUpdateTitle {
+    font-size: 22px;
+    font-weight: 800;
+}
+
+.selfUpdateDetail {
+    font-size: 13px;
+    color: rgba(172, 182, 200, 0.95);
+}
+
+.selfUpdateProgress {
+    width: min(620px, 92vw);
+}
+
+.selfUpdateActions {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}
+
+.selfUpdateButton {
+    width: min(320px, 90vw);
+}
+
 .frameIntro .header,
 .frameIntro .main,
 .frameIntro .bgNoise,

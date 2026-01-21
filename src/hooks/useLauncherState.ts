@@ -23,6 +23,17 @@ export type LauncherStatus = {
     primaryLabel: string;
     primaryEnabled: boolean;
     primaryTone: PrimaryTone;
+    selfUpdate: {
+        blocking: boolean;
+        status: SelfUpdateStatus;
+        title: string;
+        detail: string;
+        progressLabel: string;
+        progressPercent: number;
+        showProgress: boolean;
+        actionLabel: string;
+        actionEnabled: boolean;
+    };
 };
 
 export type LauncherActions = {
@@ -30,6 +41,8 @@ export type LauncherActions = {
     cancelUpdate: () => void;
     launch: () => Promise<boolean>;
     forceRecheck: () => void;
+    startLauncherUpdate: () => void;
+    retryLauncherUpdate: () => void;
     addLog: (line: string) => void;
     logs: string[];
 };
@@ -45,9 +58,17 @@ type LauncherSnapshot = {
 type DetectionPhase = "IDLE" | "DETECTING" | "RESOLVED";
 type ActionPhase = "IDLE" | "REQUEST_URL" | "DOWNLOADING" | "INSTALLING" | "VERIFYING" | "ERROR";
 type ActionTarget = "desktop" | "addon" | null;
+type SelfUpdateStatus = "CHECKING" | "UP_TO_DATE" | "UPDATE_REQUIRED" | "DOWNLOADING" | "INSTALLING" | "ERROR";
 
 type ActionProgressEvent = {
     phase: ActionPhase;
+    progress: number | null;
+    message: string;
+    log: string;
+};
+
+type LauncherUpdateProgressEvent = {
+    phase: "DOWNLOADING" | "INSTALLING";
     progress: number | null;
     message: string;
     log: string;
@@ -57,6 +78,13 @@ type ActionResult = {
     ok: boolean;
     errorCode?: string;
     errorMessage?: string;
+};
+
+type LauncherUpdateCheck = {
+    status: "UP_TO_DATE" | "UPDATE_REQUIRED" | "ERROR";
+    localVersion: string | null;
+    remoteVersion: string | null;
+    errorMessage?: string | null;
 };
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -162,6 +190,8 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     const [actionProgress, setActionProgress] = useState<number | null>(null);
     const [actionMessage, setActionMessage] = useState("");
     const [actionTarget, setActionTarget] = useState<ActionTarget>(null);
+    const [selfUpdateStatus, setSelfUpdateStatus] = useState<SelfUpdateStatus>("CHECKING");
+    const [selfUpdateProgress, setSelfUpdateProgress] = useState<number | null>(null);
 
     const addLog = (line: string) => {
         if (lastRawLog === line) return;
@@ -171,7 +201,28 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         setLogs(cachedLogs);
     };
 
+    const runSelfUpdateCheck = () => {
+        setSelfUpdateStatus("CHECKING");
+        setSelfUpdateProgress(null);
+        invoke<LauncherUpdateCheck>("get_launcher_update_state")
+            .then((result) => {
+                if (result.status === "UP_TO_DATE") {
+                    setSelfUpdateStatus("UP_TO_DATE");
+                    return;
+                }
+                if (result.status === "UPDATE_REQUIRED") {
+                    setSelfUpdateStatus("UPDATE_REQUIRED");
+                    return;
+                }
+                setSelfUpdateStatus("ERROR");
+            })
+            .catch(() => {
+                setSelfUpdateStatus("ERROR");
+            });
+    };
+
     const startUpdate = () => {
+        if (selfUpdateStatus !== "UP_TO_DATE") return;
         if (!requiredAction || requiredAction === "LAUNCH") return;
         const target = requiredAction.includes("DESKTOP") ? "desktop" : "addon";
         setActionTarget(target);
@@ -208,6 +259,28 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         setActionTarget(null);
     };
 
+    const startLauncherUpdate = () => {
+        if (selfUpdateStatus !== "UPDATE_REQUIRED") return;
+        setSelfUpdateStatus("DOWNLOADING");
+        setSelfUpdateProgress(0);
+        invoke<ActionResult>("perform_launcher_update")
+            .then((result) => {
+                if (!result.ok) {
+                    setSelfUpdateStatus("ERROR");
+                }
+            })
+            .catch(() => {
+                setSelfUpdateStatus("ERROR");
+            });
+    };
+
+    const retryLauncherUpdate = () => {
+        runSelfUpdateCheck();
+    };
+
+    useEffect(() => {
+        runSelfUpdateCheck();
+    }, []);
 
     const launch = () => {
         return invoke("launch_desktop_app")
@@ -237,6 +310,14 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         }).then((stop) => {
             unlistenTasks.push(stop);
         });
+        listen<LauncherUpdateProgressEvent>("launcher-update-progress", (event) => {
+            const payload = event.payload;
+            setSelfUpdateStatus(payload.phase);
+            setSelfUpdateProgress(payload.progress ?? null);
+            if (payload.log) addLog(payload.log);
+        }).then((stop) => {
+            unlistenTasks.push(stop);
+        });
         unlisten = () => {
             unlistenTasks.forEach((stop) => stop());
         };
@@ -249,6 +330,10 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         let cancelled = false;
 
         const loadState = async () => {
+            if (selfUpdateStatus !== "UP_TO_DATE") {
+                setDetectionPhase("IDLE");
+                return;
+            }
             if (detectionTick === 0 && (cachedSnapshot || cachedSnapshotError)) {
                 setSnapshot(cachedSnapshot);
                 setSnapshotError(cachedSnapshotError);
@@ -286,7 +371,7 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         return () => {
             cancelled = true;
         };
-    }, [detectionTick]);
+    }, [detectionTick, selfUpdateStatus]);
 
     const isDetecting = detectionPhase !== "RESOLVED";
     const isUpdating = actionPhase !== "IDLE" && actionPhase !== "ERROR";
@@ -375,6 +460,24 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
     const errorIntegrity: { state: Health; label: string } = { state: "error", label: "Something went wrong" };
     const integrity = hasError ? errorIntegrity : mapIntegrity(resolved.integrityStatus);
     const progressActive = resolved.showProgressBar;
+    const selfUpdateBlocking = selfUpdateStatus !== "UP_TO_DATE";
+    const selfUpdateShowProgress = selfUpdateStatus === "DOWNLOADING" || selfUpdateStatus === "INSTALLING";
+    const selfUpdateTitle =
+        selfUpdateStatus === "ERROR"
+            ? "Something went wrong"
+            : selfUpdateStatus === "CHECKING"
+              ? "Checking for updates…"
+              : "Launcher update required";
+    const selfUpdateDetail = selfUpdateStatus === "ERROR" ? "Please try again" : "";
+    const selfUpdateProgressLabel =
+        selfUpdateStatus === "DOWNLOADING"
+            ? "Downloading update…"
+            : selfUpdateStatus === "INSTALLING"
+              ? "Installing update…"
+              : "";
+    const selfUpdateActionLabel = selfUpdateStatus === "ERROR" ? "Retry" : "Update & Restart";
+    const selfUpdateActionEnabled = selfUpdateStatus === "UPDATE_REQUIRED" || selfUpdateStatus === "ERROR";
+    const selfUpdatePercent = selfUpdateShowProgress ? selfUpdateProgress ?? 0 : 0;
     const status: LauncherStatus = {
         desktop: { state: mapComponentState(desktopComponent), version: desktopVersion, target: desktopTarget },
         addon: { state: mapComponentState(addonComponent), version: addonVersion, target: addonTarget },
@@ -391,6 +494,17 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         primaryLabel: resolved.primaryActionLabel,
         primaryEnabled: resolved.primaryActionEnabled,
         primaryTone,
+        selfUpdate: {
+            blocking: selfUpdateBlocking,
+            status: selfUpdateStatus,
+            title: selfUpdateTitle,
+            detail: selfUpdateDetail,
+            progressLabel: selfUpdateProgressLabel,
+            progressPercent: selfUpdatePercent,
+            showProgress: selfUpdateShowProgress,
+            actionLabel: selfUpdateActionLabel,
+            actionEnabled: selfUpdateActionEnabled,
+        },
     };
 
     const actions: LauncherActions = {
@@ -398,6 +512,8 @@ export function useLauncherState(): { status: LauncherStatus; actions: LauncherA
         cancelUpdate,
         launch,
         forceRecheck,
+        startLauncherUpdate,
+        retryLauncherUpdate,
         addLog,
         logs,
     };
