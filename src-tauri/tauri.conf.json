@@ -1,44 +1,55 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PVP-S Launcher",
-  "version": "0.2.301",
-  "identifier": "bg.pvpscalpel.launcher",
-  "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1421",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "windows": [
-      {
-        "title": "PvP-S Launcher",
-        "width": 1300,
-        "height": 650,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false
-      }
-    ],
-    "security": {
-      "csp": null
-    }
-  },
-  "bundle": {
-    "active": true,
-    "targets": "all",
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "PVP-S Launcher",
+    "version": "0.2.302",
+    "identifier": "bg.pvpscalpel.launcher",
+    "build": {
+        "beforeDevCommand": "npm run dev",
+        "devUrl": "http://localhost:1421",
+        "beforeBuildCommand": "npm run build",
+        "frontendDist": "../dist"
+    },
+    "app": {
+        "windows": [
+            {
+                "title": "PvP-S Launcher",
+                "width": 1300,
+                "height": 650,
+                "decorations": false,
+                "transparent": true,
+                "shadow": false
+            }
+        ],
+        "security": {
+            "csp": null
+        }
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
 
-    "publisher": "PvP Scalpel",
-    "copyright": "© 2026 PvP Scalpel",
-    "shortDescription": "Secure launcher and patcher for PvP Scalpel, keeping the desktop app and World of Warcraft addon in version lockstep.",
-    "longDescription": "PvP Scalpel is a secure desktop launcher, patcher, and integrity layer designed for competitive World of Warcraft PvP. It ensures the desktop application and in-game addon always remain in version lockstep, verifies installation integrity, and prevents mismatched or outdated builds from launching. Built with Tauri for performance and security, PvP Scalpel provides a reliable entry point for players who depend on accurate data, strict versioning, and stable updates.",
-    
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
-  }
+        "publisher": "PvP Scalpel",
+        "copyright": "© 2026 PvP Scalpel",
+        "shortDescription": "Secure launcher and patcher for PvP Scalpel, keeping the desktop app and World of Warcraft addon in version lockstep.",
+        "longDescription": "PvP Scalpel is a secure desktop launcher, patcher, and integrity layer designed for competitive World of Warcraft PvP. It ensures the desktop application and in-game addon always remain in version lockstep, verifies installation integrity, and prevents mismatched or outdated builds from launching. Built with Tauri for performance and security, PvP Scalpel provides a reliable entry point for players who depend on accurate data, strict versioning, and stable updates.",
+
+        "icon": [
+            "icons/32x32.png",
+            "icons/128x128.png",
+            "icons/128x128@2x.png",
+            "icons/icon.icns",
+            "icons/icon.ico"
+        ],
+
+        "windows": {
+            "allowDowngrades": true,
+            "webviewInstallMode": {
+                "silent": true,
+                "type": "downloadBootstrapper"
+            },
+            "wix": {
+                "upgradeCode": "A3F9C2B4-6E1A-4F3C-9D6A-8C4E0E9A2B17"
+            }
+        }
+    }
 }
